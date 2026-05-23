@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# tcl — team-claude session helper. Wraps helm + kubectl for common ops.
+#
+# Usage: tcl <command> [args]
+# Env:
+#   TCL_NAMESPACE   (default: team-claude)
+#   TCL_DOMAIN      (default: shared-coding-session.devthefuture.org)
+#   TCL_CHART_DIR   (default: chart/team-claude, resolved relative to repo root)
+#   TCL_IMAGE_PULL_SECRET  (default: empty; if set, --set imagePullSecrets[0].name=...)
+#   KUBECONFIG      (standard)
+
+set -euo pipefail
+
+NS="${TCL_NAMESPACE:-team-claude}"
+DOMAIN="${TCL_DOMAIN:-shared-coding-session.devthefuture.org}"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+REPO_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+CHART_DIR="${TCL_CHART_DIR:-$REPO_ROOT/chart/team-claude}"
+IMAGE_PULL_SECRET="${TCL_IMAGE_PULL_SECRET:-}"
+
+die()  { echo "tcl: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null || die "missing dependency: $1"; }
+
+usage() {
+  cat <<EOF
+tcl — team-claude session helper
+
+Commands:
+  create <name> [--user U] [--repo URL] [--daemon] [--ssh]
+                          Install a new session via Helm
+  list                    List all team-claude releases in the namespace
+  attach <name>           kubectl exec into the tmux/claude session
+  url <name>              Print code-server URL + password
+  room <name>             Print participants room URL (requires --daemon)
+  logs <name> [-c CT]     Tail logs of a container (default: devcontainer)
+  destroy <name>          helm uninstall (PVC kept via Retain)
+  purge <name>            destroy + delete PVC (DATA LOST)
+
+Env:
+  TCL_NAMESPACE=$NS
+  TCL_DOMAIN=$DOMAIN
+  TCL_CHART_DIR=$CHART_DIR
+EOF
+}
+
+cmd_create() {
+  local name="${1:-}"; shift || true
+  [ -n "$name" ] || die "create requires <name>"
+  local extra_args=()
+  local user="" repo=""
+  local daemon=false ssh=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --user) user="$2"; shift 2;;
+      --repo) repo="$2"; shift 2;;
+      --daemon) daemon=true; shift;;
+      --ssh) ssh=true; shift;;
+      *) extra_args+=("$1"); shift;;
+    esac
+  done
+  local sets=(
+    --set "session.name=$name"
+    --set "domain=$DOMAIN"
+    --set "devcontainer.image.tag=latest"
+    --set "devcontainer.image.pullPolicy=Always"
+  )
+  [ -n "$user" ] && sets+=(--set "session.user=$user")
+  [ -n "$repo" ] && sets+=(--set "session.repo=$repo")
+  [ "$daemon" = true ] && sets+=(--set "daemon.enabled=true" --set "daemon.image.tag=latest" --set "daemon.image.pullPolicy=Always")
+  [ "$ssh"    = true ] && sets+=(--set "ssh.enabled=true")
+  [ -n "$IMAGE_PULL_SECRET" ] && sets+=(--set "imagePullSecrets[0].name=$IMAGE_PULL_SECRET")
+
+  helm upgrade --install "session-$name" "$CHART_DIR" \
+    --namespace "$NS" --create-namespace \
+    "${sets[@]}" "${extra_args[@]}"
+
+  echo
+  echo "Session 'session-$name' deployed. Wait for the Pod to become Running:"
+  echo "  kubectl get pod -n $NS session-$name-0 -w"
+}
+
+cmd_list() {
+  helm list -n "$NS" -f '^session-'
+}
+
+cmd_attach() {
+  local name="${1:-}"; [ -n "$name" ] || die "attach requires <name>"
+  exec kubectl exec -it -n "$NS" "session-$name-0" -c devcontainer -- claude-attach
+}
+
+cmd_url() {
+  local name="${1:-}"; [ -n "$name" ] || die "url requires <name>"
+  local pwd_b64; pwd_b64=$(kubectl get secret -n "$NS" "session-$name-auth" -o jsonpath='{.data.codeServerPassword}')
+  printf "URL:      https://code-%s.%s/\n" "$name" "$DOMAIN"
+  printf "Password: %s\n" "$(echo "$pwd_b64" | base64 -d)"
+}
+
+cmd_room() {
+  local name="${1:-}"; [ -n "$name" ] || die "room requires <name>"
+  local url_b64; url_b64=$(kubectl get secret -n "$NS" "session-$name-auth" -o jsonpath='{.data.roomUrl}')
+  echo "$(echo "$url_b64" | base64 -d)"
+}
+
+cmd_logs() {
+  local name="${1:-}"; shift || true
+  [ -n "$name" ] || die "logs requires <name>"
+  local container="devcontainer"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -c|--container) container="$2"; shift 2;;
+      *) shift;;
+    esac
+  done
+  exec kubectl logs -f -n "$NS" "session-$name-0" -c "$container"
+}
+
+cmd_destroy() {
+  local name="${1:-}"; [ -n "$name" ] || die "destroy requires <name>"
+  helm uninstall "session-$name" -n "$NS"
+  echo "Destroyed. PVC 'session-$name-data' preserved (Retain). Use 'tcl purge $name' to also delete the data."
+}
+
+cmd_purge() {
+  local name="${1:-}"; [ -n "$name" ] || die "purge requires <name>"
+  read -r -p "About to PERMANENTLY DELETE session-$name AND its data. Type the name to confirm: " confirm
+  [ "$confirm" = "$name" ] || die "aborted"
+  helm uninstall "session-$name" -n "$NS" 2>/dev/null || true
+  kubectl delete pvc -n "$NS" "session-$name-data" --ignore-not-found
+}
+
+need helm
+need kubectl
+
+cmd="${1:-}"
+shift || true
+case "$cmd" in
+  create)  cmd_create  "$@";;
+  list)    cmd_list    "$@";;
+  attach)  cmd_attach  "$@";;
+  url)     cmd_url     "$@";;
+  room)    cmd_room    "$@";;
+  logs)    cmd_logs    "$@";;
+  destroy) cmd_destroy "$@";;
+  purge)   cmd_purge   "$@";;
+  ""|help|-h|--help) usage;;
+  *) usage; exit 2;;
+esac
