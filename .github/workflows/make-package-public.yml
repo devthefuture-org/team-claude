@@ -1,0 +1,25 @@
+name: Make GHCR package public
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Container package name (under the org)
+        required: true
+        default: team-claude-devcontainer
+
+permissions:
+  packages: write
+
+jobs:
+  make-public:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set visibility to public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method PATCH \
+            "/orgs/${{ github.repository_owner }}/packages/container/${{ inputs.package }}/visibility" \
+            -f visibility=public \
+            && echo "Set ${{ inputs.package }} to public"
