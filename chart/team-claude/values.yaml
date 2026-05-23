@@ -74,9 +74,9 @@ codeServer:
       cpu: "1"
       memory: 1Gi
   # Extensions installed on first container start via a postStart hook.
-  # Use Open VSX ids (code-server's default registry). Failures are non-fatal.
-  extensions:
-    - anthropic.claude-code
+  # The image already bakes in anthropic.claude-code + devthefuture-org.team-claude
+  # from the Microsoft Marketplace. Add your own here per-session if needed.
+  extensions: []
 
 daemon:
   enabled: false

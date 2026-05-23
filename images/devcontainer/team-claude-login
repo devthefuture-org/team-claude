@@ -1,0 +1,39 @@
+#!/bin/bash
+# team-claude-login — wraps `claude` to prefer `setup-token` on first run.
+#
+# Why: the default `claude` interactive login opens an OAuth flow whose
+# callback hits http://localhost:<random-port>/callback — that doesn't reach
+# the user's browser when claude runs inside a remote pod. `claude setup-token`
+# uses a code-paste flow that works from any browser anywhere.
+set -e
+
+CREDS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json"
+
+if [ ! -f "$CREDS" ] && ! [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  cat <<'EOF'
+═════════════════════════════════════════════════════════════════════════
+  First-time login required.
+
+  This pod runs remotely, so the standard `claude` OAuth (with localhost
+  callback) cannot reach your browser. Use the manual code-paste flow:
+
+      $ claude setup-token
+
+  - It prints a URL — open it in any browser.
+  - Authenticate with your Claude subscription (Pro/Max).
+  - Paste the resulting code back into the terminal.
+  - The long-lived token is saved to ~/.claude/ on the PVC, so it
+    survives pod restarts and is shared with every shell attaching to
+    this tmux session.
+
+  Or, if you have an API key:
+      $ export ANTHROPIC_API_KEY=sk-ant-...
+      $ claude
+
+═════════════════════════════════════════════════════════════════════════
+
+EOF
+  exec bash -l
+fi
+
+exec claude "$@"

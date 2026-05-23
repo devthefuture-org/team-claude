@@ -1,9 +1,9 @@
-FROM node:20-alpine AS deps
+FROM node:20.20-alpine3.22 AS deps
 WORKDIR /app
 COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 
-FROM node:20-alpine
+FROM node:20.20-alpine3.22
 WORKDIR /app
 RUN apk add --no-cache tini
 COPY --from=deps /app/node_modules ./node_modules

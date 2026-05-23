@@ -96,7 +96,11 @@ run_as_devbox "
   ln -sf /etc/team-claude/tmux.conf \"\$HOME/.tmux.conf\"
   tmux -S \"$TMUX_SOCKET\" -f /etc/team-claude/tmux.conf start-server
   if ! tmux -S \"$TMUX_SOCKET\" has-session -t claude-main 2>/dev/null; then
-    tmux -S \"$TMUX_SOCKET\" -f /etc/team-claude/tmux.conf new-session -d -s claude-main 'claude; exec bash -l'
+    # On first run there is no auth state yet. The default OAuth flow uses a
+    # localhost callback that won't reach the user's browser from inside the
+    # pod, so we launch a wrapper that prefers 'setup-token' (manual code paste)
+    # when ~/.claude/.credentials.json is absent.
+    tmux -S \"$TMUX_SOCKET\" -f /etc/team-claude/tmux.conf new-session -d -s claude-main 'team-claude-login; exec bash -l'
   fi
 "
 

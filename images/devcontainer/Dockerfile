@@ -1,4 +1,4 @@
-FROM jetpackio/devbox:latest
+FROM jetpackio/devbox:0.17.2
 
 USER root
 
@@ -32,7 +32,7 @@ RUN apt-get update \
     && echo 'AllowUsers devbox' >> /etc/ssh/sshd_config \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && npm install -g @anthropic-ai/claude-code \
+    && npm install -g @anthropic-ai/claude-code@2.1.150 \
     && echo 'devbox ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/devbox \
     && chmod 0440 /etc/sudoers.d/devbox \
     && rm -rf /var/lib/apt/lists/*
@@ -106,10 +106,13 @@ RUN mkdir -p /opt/team-claude-skel/.local/share \
     && chown -R 1000:1000 /opt/team-claude-skel
 
 COPY tmux.conf /etc/team-claude/tmux.conf
-COPY team-claude-init /usr/local/bin/team-claude-init
-COPY claude-attach /usr/local/bin/claude-attach
+COPY team-claude-init  /usr/local/bin/team-claude-init
+COPY team-claude-login /usr/local/bin/team-claude-login
+COPY claude-attach     /usr/local/bin/claude-attach
 RUN chmod 0644 /etc/team-claude/tmux.conf \
-    && chmod +x /usr/local/bin/team-claude-init /usr/local/bin/claude-attach
+    && chmod +x /usr/local/bin/team-claude-init \
+               /usr/local/bin/team-claude-login \
+               /usr/local/bin/claude-attach
 
 # Rootless image — required by clusters that enforce PSA `restricted` /
 # runAsNonRoot=true. K8s needs a NUMERIC uid here (it can't resolve names
