@@ -28,6 +28,7 @@ RUN apt-get update \
     && sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config \
     && sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config \
     && sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
+    && sed -i 's/^#*Port .*/Port 2222/'  /etc/ssh/sshd_config \
     && echo 'AllowUsers devbox' >> /etc/ssh/sshd_config \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
@@ -118,6 +119,8 @@ RUN chmod 0644 /etc/team-claude/tmux.conf \
 USER 1000:1000
 WORKDIR /home/devbox
 
-EXPOSE 22
+# SSH listens on 2222 (rootless: only ports >1023 are bindable). The chart's
+# Service exposes it as :22 externally via targetPort: 2222.
+EXPOSE 2222
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/team-claude-init"]
