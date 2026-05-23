@@ -68,10 +68,13 @@ ssh.enabled because sshd needs to bind port 22.
 */}}
 
 {{- define "team-claude.restrictedSecurityContext" -}}
+runAsNonRoot: true
 runAsUser: 1000
 runAsGroup: 1000
 allowPrivilegeEscalation: false
 capabilities:
   drop:
     - ALL
+seccompProfile:
+  type: RuntimeDefault
 {{- end -}}

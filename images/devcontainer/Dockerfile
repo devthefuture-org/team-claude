@@ -110,6 +110,14 @@ COPY claude-attach /usr/local/bin/claude-attach
 RUN chmod 0644 /etc/team-claude/tmux.conf \
     && chmod +x /usr/local/bin/team-claude-init /usr/local/bin/claude-attach
 
+# Rootless image — required by clusters that enforce PSA `restricted` /
+# runAsNonRoot=true. K8s needs a NUMERIC uid here (it can't resolve names
+# without entering the container). ssh.enabled in the chart will not work
+# on rootless-only clusters because sshd needs to bind port 22 (root-only);
+# use kubectl exec or VS Code "Attach Visual Studio Code" instead.
+USER 1000:1000
+WORKDIR /home/devbox
+
 EXPOSE 22
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/team-claude-init"]

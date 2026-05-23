@@ -10,4 +10,4 @@ RUN apt-get update \
     && npm install -g @anthropic-ai/claude-code \
     && npm cache clean --force
 
-USER 1000
+USER 1000:1000

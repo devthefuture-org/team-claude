@@ -10,6 +10,6 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY src ./src
 COPY public ./public
-USER node
+USER 1000:1000
 EXPOSE 7000
 ENTRYPOINT ["/sbin/tini", "--", "node", "src/server.js"]
