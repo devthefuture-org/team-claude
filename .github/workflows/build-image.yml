@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'images/devcontainer/**'
+      - 'images/code-server/**'
       - 'daemon/**'
       - '.github/workflows/build-image.yml'
     tags:
@@ -27,6 +28,8 @@ jobs:
         include:
           - name: team-claude-devcontainer
             context: images/devcontainer
+          - name: team-claude-code-server
+            context: images/code-server
           - name: team-claude-host
             context: daemon
     steps:

@@ -61,7 +61,9 @@ codeServer:
   enabled: true
   port: 8080
   image:
-    repository: codercom/code-server
+    # Custom image: codercom/code-server + Node.js + claude CLI pre-baked.
+    # Source: images/code-server/Dockerfile.
+    repository: ghcr.io/devthefuture-org/team-claude-code-server
     tag: "latest"
     pullPolicy: IfNotPresent
   resources:

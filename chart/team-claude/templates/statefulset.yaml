@@ -150,7 +150,7 @@ spec:
                   - -c
                   - |
                     {{- range . }}
-                    code-server --install-extension {{ . | quote }} || true
+                    code-server --install-extension {{ . | quote }} 2>&1 | tail -2 || true
                     {{- end }}
           {{- end }}
           readinessProbe:
