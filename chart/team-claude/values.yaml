@@ -11,15 +11,14 @@ hosts:
 
 ingress:
   enabled: true
-  # Ingress class name — override per cluster (nginx, traefik, haproxy, ...).
   className: haproxy
-  # Annotations are ingress-controller specific. Examples:
-  #   nginx:   nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-  #   haproxy: haproxy.org/timeout-server: "1h"
-  #   traefik: traefik.ingress.kubernetes.io/router.entrypoints: websecure
-  # code-server and the daemon WS both need long-lived connections — set the
-  # appropriate timeout annotation for your controller.
-  annotations: {}
+  # Defaults target jcmoraisjr/haproxy-ingress (controller
+  # haproxy-ingress.github.io/controller). code-server WebSockets and the
+  # daemon WS need long timeouts; bump body size for VS Code extension installs.
+  annotations:
+    haproxy-ingress.github.io/timeout-client: 1h
+    haproxy-ingress.github.io/timeout-server: 1h
+    haproxy-ingress.github.io/proxy-body-size: 100m
   tls:
     enabled: true
     clusterIssuer: letsencrypt-prod
@@ -36,7 +35,7 @@ persistence:
 
 devcontainer:
   image:
-    repository: ghcr.io/devthejo/team-claude-devcontainer
+    repository: ghcr.io/devthefuture-org/team-claude-devcontainer
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   resources:
@@ -69,7 +68,7 @@ daemon:
   healthPath: /healthz
   wsPath: /ws
   image:
-    repository: ghcr.io/devthejo/team-claude-host
+    repository: ghcr.io/devthefuture-org/team-claude-host
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   resources:
@@ -101,11 +100,8 @@ networkPolicy:
   allowDNS: true
   allowEgressInternet: true
   # Namespaces hosting the ingress controller — adapt to your cluster.
-  # The NetworkPolicy will allow ingress traffic only from these namespaces.
   ingressNamespaces:
-    - ingress-nginx
-    - traefik
-    - haproxy-controller
+    - haproxy-ingress
     - kube-system
 
 serviceAccount:
