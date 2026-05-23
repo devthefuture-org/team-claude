@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>team-claude — participant</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header>
+    <h1>team-claude</h1>
+    <span id="session-name" class="muted">connexion…</span>
+    <span id="status" class="status status-offline">offline</span>
+  </header>
+
+  <main>
+    <section id="me">
+      <h2>Toi</h2>
+      <div class="row">
+        <label>Nom <input id="name" placeholder="Alice" autocomplete="name"></label>
+        <label>Rôle <input id="role" placeholder="backend"></label>
+      </div>
+      <div class="row">
+        <label class="checkbox">
+          <input type="checkbox" id="hasMore" checked>
+          j'ai encore des arguments
+        </label>
+        <button id="presence-btn" type="button" disabled>Rejoindre la session</button>
+      </div>
+    </section>
+
+    <section id="compose">
+      <h2>Contribuer</h2>
+      <div class="row">
+        <label>Type
+          <select id="kind">
+            <option value="argument">argument</option>
+            <option value="objection">objection</option>
+            <option value="question">question</option>
+            <option value="constraint">contrainte</option>
+            <option value="agreement">accord</option>
+            <option value="clarification">clarification</option>
+          </select>
+        </label>
+        <button id="send-btn" type="button" disabled>Envoyer</button>
+      </div>
+      <textarea id="body" rows="4" placeholder="Ton message…"></textarea>
+    </section>
+
+    <section id="participants">
+      <h2>Participants</h2>
+      <ul id="participants-list" class="muted">(aucun)</ul>
+    </section>
+
+    <section id="feed">
+      <h2>Messages récents</h2>
+      <ul id="feed-list" class="muted">(aucun)</ul>
+    </section>
+  </main>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

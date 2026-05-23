@@ -1,4 +1,4 @@
-name: Build & push devcontainer image
+name: Build & push images
 
 on:
   push:
@@ -6,19 +6,14 @@ on:
       - main
     paths:
       - 'images/devcontainer/**'
+      - 'daemon/**'
       - '.github/workflows/build-image.yml'
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Image tag to push (in addition to git sha and "latest")'
-        required: false
-        default: ''
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/team-claude-devcontainer
 
 jobs:
   build:
@@ -26,11 +21,16 @@ jobs:
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: team-claude-devcontainer
+            context: images/devcontainer
+          - name: team-claude-host
+            context: daemon
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -46,31 +46,23 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.name }}
           tags: |
             type=ref,event=branch
             type=ref,event=tag
             type=sha,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event.inputs.tag != '' }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: images/devcontainer
+          context: ${{ matrix.context }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
           platforms: linux/amd64
-
-      - name: Image summary
-        run: |
-          echo "### Pushed images" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo '${{ steps.meta.outputs.tags }}' >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
 
   validate-chart:
     runs-on: ubuntu-latest
@@ -88,16 +80,24 @@ jobs:
             | tar -xz -C /tmp
           sudo install -m 0755 /tmp/kubeconform /usr/local/bin/kubeconform
 
-      - name: Lint chart
-        run: helm lint chart/team-claude
+      - name: Lint charts
+        run: |
+          helm lint chart/team-claude
+          helm lint chart/team-claude-base
 
-      - name: Validate manifests (full config)
+      - name: Validate session chart (full config)
         run: |
           helm template demo chart/team-claude \
             --namespace team-claude \
             --set session.name=demo \
-            --set domain=team.example.com \
+            --set domain=shared-coding-session.devthefuture.org \
             --set daemon.enabled=true \
             --set ssh.enabled=true \
             --set "ssh.authorizedKeys[0]=ssh-ed25519 AAAAtest test@host" \
+            | kubeconform -summary -strict -ignore-missing-schemas
+
+      - name: Validate base chart
+        run: |
+          helm template base chart/team-claude-base \
+            --namespace team-claude \
             | kubeconform -summary -strict -ignore-missing-schemas

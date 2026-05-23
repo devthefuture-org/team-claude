@@ -1,0 +1,17 @@
+{
+  "name": "team-claude-host",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WebSocket + static web app that turns participant contributions into .team-claude/* files on the shared PVC",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
