@@ -47,6 +47,17 @@ log "preparing user directories"
 makedirs 0700 "$SSH_DIR" "$TMUX_SOCKET_DIR"
 makedirs 0755 "$CLAUDE_DIR" "$CLAUDE_DIR/tmux-resurrect" "$WORKSPACE_DIR"
 
+# Seed per-user tools (fnm etc) onto an empty PVC the first time.
+if [ -d /opt/team-claude-skel ] && [ ! -d "$DEVBOX_HOME/.local/share/fnm" ]; then
+  log "seeding ~/.local/share from /opt/team-claude-skel"
+  if is_root; then
+    cp -rn /opt/team-claude-skel/.local "$DEVBOX_HOME/" 2>/dev/null || true
+    chown -R devbox:devbox "$DEVBOX_HOME/.local"
+  else
+    cp -rn /opt/team-claude-skel/.local "$DEVBOX_HOME/" 2>/dev/null || true
+  fi
+fi
+
 if [ -n "${SESSION_REPO:-}" ] && [ ! -d "$WORKSPACE_DIR/.git" ]; then
   log "cloning $SESSION_REPO into $WORKSPACE_DIR"
   if ! run_as_devbox "git clone '$SESSION_REPO' '$WORKSPACE_DIR'"; then
