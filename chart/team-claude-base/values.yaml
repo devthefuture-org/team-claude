@@ -1,0 +1,29 @@
+namespace:
+  create: true
+  name: team-claude
+  labels: {}
+  annotations: {}
+
+# Wildcard TLS certificate shared by all session Ingresses.
+# Issued once via cert-manager (DNS-01) and reused across sessions to avoid
+# Let's Encrypt rate limits (50 certs/domain/week).
+certificate:
+  enabled: true
+  # Issued for *.<domain>. Must match the value passed to the session chart.
+  domain: shared-coding-session.devthefuture.org
+  secretName: team-claude-wildcard-tls
+  issuer:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  # Auto-renew when less than this many days remain.
+  renewBefore: 720h  # 30 days
+
+# Optional ResourceQuota for the namespace to cap aggregate session resource use.
+resourceQuota:
+  enabled: false
+  hard:
+    requests.cpu: "32"
+    requests.memory: 64Gi
+    limits.cpu: "128"
+    limits.memory: 256Gi
+    persistentvolumeclaims: "20"

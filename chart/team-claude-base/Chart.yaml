@@ -1,0 +1,9 @@
+apiVersion: v2
+name: team-claude-base
+description: One-shot cluster-wide setup for team-claude — namespace + wildcard TLS certificate shared by every session. Install once per cluster before installing any session.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: devthejo
+home: https://github.com/devthefuture-org/team-claude

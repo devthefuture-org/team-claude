@@ -21,9 +21,14 @@ ingress:
     haproxy-ingress.github.io/proxy-body-size: 100m
   tls:
     enabled: true
-    clusterIssuer: letsencrypt-prod
-    wildcard: false
-    secretName: ""
+    # By default, sessions reuse the wildcard cert provisioned by the
+    # team-claude-base chart (install once per cluster). This avoids hitting
+    # the Let's Encrypt rate limit of 50 certs/domain/week as sessions scale.
+    # To issue a per-session cert instead, set clusterIssuer (e.g. letsencrypt-prod)
+    # and leave secretName empty.
+    clusterIssuer: ""
+    secretName: team-claude-wildcard-tls
+    wildcard: true
 
 persistence:
   enabled: true

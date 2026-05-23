@@ -84,3 +84,9 @@ room-url: ## Print the participants room URL
 .PHONY: logs
 logs: ## Tail logs from the devcontainer
 	kubectl logs -f -n $(NAMESPACE) session-$(SESSION)-0 -c devcontainer
+
+.PHONY: base-install
+base-install: ## One-shot per-cluster: namespace + wildcard TLS Certificate
+	helm upgrade --install team-claude-base chart/team-claude-base \
+	  --namespace $(NAMESPACE) --create-namespace \
+	  --set certificate.domain=$(DOMAIN)

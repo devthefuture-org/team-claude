@@ -1,0 +1,21 @@
+{{- if .Values.certificate.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: team-claude-wildcard
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: team-claude
+spec:
+  secretName: {{ .Values.certificate.secretName }}
+  duration: 2160h  # 90 days
+  renewBefore: {{ .Values.certificate.renewBefore }}
+  issuerRef:
+    name: {{ .Values.certificate.issuer.name }}
+    kind: {{ .Values.certificate.issuer.kind }}
+  commonName: {{ printf "*.%s" .Values.certificate.domain | quote }}
+  dnsNames:
+    - {{ printf "*.%s" .Values.certificate.domain | quote }}
+    - {{ .Values.certificate.domain | quote }}
+{{- end }}
