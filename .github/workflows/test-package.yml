@@ -1,0 +1,21 @@
+name: Test package access
+on:
+  workflow_dispatch:
+permissions:
+  packages: write
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: List user/orgs/repo packages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== owner: ${{ github.repository_owner }} ==="
+          echo "=== Token has access to package via repo endpoint? ==="
+          gh api "/orgs/${{ github.repository_owner }}/packages/container/team-claude-devcontainer" 2>&1 || true
+          echo "=== Try via repo-linked endpoint ==="
+          gh api "/repos/${{ github.repository }}/packages/container/team-claude-devcontainer" 2>&1 || true
+          echo "=== Set visibility via PATCH with restored? ==="
+          gh api --method PATCH "/orgs/${{ github.repository_owner }}/packages/container/team-claude-devcontainer/visibility" -f visibility=public 2>&1 || true
