@@ -38,6 +38,11 @@ persistence:
     - ReadWriteOnce
   reclaimPolicy: Retain
 
+imagePullSecrets: []
+# Example for a private GHCR image:
+#   imagePullSecrets:
+#     - name: ghcr-pull
+
 devcontainer:
   image:
     repository: ghcr.io/devthefuture-org/team-claude-devcontainer
