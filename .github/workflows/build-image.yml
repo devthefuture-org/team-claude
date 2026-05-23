@@ -8,6 +8,7 @@ on:
       - 'images/devcontainer/**'
       - 'images/code-server/**'
       - 'daemon/**'
+      - 'extension/**'
       - '.github/workflows/build-image.yml'
     tags:
       - 'v*'
@@ -28,10 +29,13 @@ jobs:
         include:
           - name: team-claude-devcontainer
             context: images/devcontainer
+            file:    images/devcontainer/Dockerfile
           - name: team-claude-code-server
-            context: images/code-server
+            context: .
+            file:    images/code-server/Dockerfile
           - name: team-claude-host
             context: daemon
+            file:    daemon/Dockerfile
     steps:
       - uses: actions/checkout@v4
 
@@ -60,6 +64,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

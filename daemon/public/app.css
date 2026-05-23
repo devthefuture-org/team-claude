@@ -11,6 +11,7 @@
 }
 
 * { box-sizing: border-box; }
+html, body { background: #111; color: #e5e5e5; }
 body {
   font-family: ui-sans-serif, system-ui, sans-serif;
   background: var(--bg); color: var(--fg);

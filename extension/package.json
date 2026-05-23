@@ -1,0 +1,69 @@
+{
+  "name": "team-claude",
+  "displayName": "team-claude — collaboration",
+  "description": "Live participant feed + quick actions for collaborative Claude Code sessions",
+  "version": "0.1.0",
+  "publisher": "devthefuture-org",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/devthefuture-org/team-claude"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "workspaceContains:.team-claude/config.json",
+    "workspaceContains:.team-claude/live.md"
+  ],
+  "main": "./extension.js",
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.2.0"
+  },
+  "scripts": {
+    "package": "vsce package --no-yarn --skip-license --out team-claude.vsix"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "team-claude",
+          "title": "team-claude",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "team-claude": [
+        {
+          "id": "team-claude.panel",
+          "name": "Session",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "team-claude.openLive",
+        "title": "team-claude: Ouvrir live.md",
+        "category": "team-claude"
+      },
+      {
+        "command": "team-claude.copyPromptInitial",
+        "title": "team-claude: Copier le prompt initial",
+        "category": "team-claude"
+      },
+      {
+        "command": "team-claude.refresh",
+        "title": "team-claude: Reconnecter",
+        "category": "team-claude"
+      }
+    ]
+  }
+}

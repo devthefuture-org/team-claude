@@ -121,6 +121,17 @@ spec:
                   key: codeServerPassword
             - name: TMUX_SOCKET
               value: {{ .Values.tmuxSocket | quote }}
+            - name: SESSION_NAME
+              value: {{ include "team-claude.sessionName" . | quote }}
+            {{- if .Values.daemon.enabled }}
+            - name: TEAM_CLAUDE_WS_URL
+              value: {{ printf "ws://localhost:%v/ws" .Values.daemon.port | quote }}
+            - name: ROOM_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "team-claude.fullname" . }}-auth
+                  key: roomToken
+            {{- end }}
           args:
             - "--bind-addr=0.0.0.0:{{ .Values.codeServer.port }}"
             - "--auth=password"
