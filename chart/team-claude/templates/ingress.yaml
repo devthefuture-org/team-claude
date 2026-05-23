@@ -1,0 +1,56 @@
+{{- if .Values.ingress.enabled }}
+{{- $fullName := include "team-claude.fullname" . -}}
+{{- $codeHost := include "team-claude.codeServerHost" . -}}
+{{- $daemonHost := include "team-claude.daemonHost" . -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullName }}
+  labels:
+    {{- include "team-claude.labels" . | nindent 4 }}
+  annotations:
+    {{- if and .Values.ingress.tls.enabled .Values.ingress.tls.clusterIssuer }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer | quote }}
+    {{- end }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        {{- if .Values.codeServer.enabled }}
+        - {{ $codeHost | quote }}
+        {{- end }}
+        {{- if .Values.daemon.enabled }}
+        - {{ $daemonHost | quote }}
+        {{- end }}
+      secretName: {{ default (printf "%s-tls" $fullName) .Values.ingress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    {{- if .Values.codeServer.enabled }}
+    - host: {{ $codeHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullName }}
+                port:
+                  name: code-server
+    {{- end }}
+    {{- if .Values.daemon.enabled }}
+    - host: {{ $daemonHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullName }}
+                port:
+                  name: daemon
+    {{- end }}
+{{- end }}

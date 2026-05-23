@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "team-claude.fullname" . }}
+  labels:
+    {{- include "team-claude.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    {{- include "team-claude.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: code-server
+      port: {{ .Values.codeServer.port }}
+      targetPort: code-server
+      protocol: TCP
+    - name: daemon
+      port: {{ .Values.daemon.port }}
+      targetPort: daemon
+      protocol: TCP
+{{- if .Values.ssh.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "team-claude.fullname" . }}-ssh
+  labels:
+    {{- include "team-claude.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.ssh.serviceType }}
+  selector:
+    {{- include "team-claude.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: ssh
+      port: 22
+      targetPort: ssh
+      protocol: TCP
+      {{- if and (eq .Values.ssh.serviceType "NodePort") .Values.ssh.nodePort }}
+      nodePort: {{ .Values.ssh.nodePort }}
+      {{- end }}
+{{- end }}

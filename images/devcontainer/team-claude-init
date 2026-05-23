@@ -1,0 +1,106 @@
+#!/bin/bash
+set -euo pipefail
+
+DEVBOX_HOME=/home/devbox
+SSH_DIR="$DEVBOX_HOME/.ssh"
+CLAUDE_DIR="$DEVBOX_HOME/.claude"
+WORKSPACE_DIR="$DEVBOX_HOME/workspace"
+TMUX_SOCKET="${TMUX_SOCKET:-$DEVBOX_HOME/.tmux-claude/socket}"
+TMUX_SOCKET_DIR="$(dirname "$TMUX_SOCKET")"
+ENABLE_SSH="${ENABLE_SSH:-false}"
+
+log()     { echo "[team-claude-init] $*" >&2; }
+is_root() { [ "$(id -u)" = "0" ]; }
+
+# Create a directory tree owned by the devbox user. When running as root we use
+# `install` so ownership is set atomically; non-root we just mkdir and rely on
+# the PVC's fsGroup (1000) to make the path writable.
+makedirs() {
+  local mode="$1"; shift
+  if is_root; then
+    install -d -o devbox -g devbox -m "$mode" "$@"
+  else
+    mkdir -p "$@"
+    chmod "$mode" "$@"
+  fi
+}
+
+# Copy a file from a read-only mount into $HOME, preserving ownership when root.
+install_file() {
+  local mode="$1" src="$2" dst="$3"
+  if is_root; then
+    install -o devbox -g devbox -m "$mode" "$src" "$dst"
+  else
+    install -m "$mode" "$src" "$dst"
+  fi
+}
+
+run_as_devbox() {
+  if is_root; then
+    sudo -u devbox -H bash -lc "$1"
+  else
+    bash -lc "$1"
+  fi
+}
+
+log "preparing user directories"
+makedirs 0700 "$SSH_DIR" "$TMUX_SOCKET_DIR"
+makedirs 0755 "$CLAUDE_DIR" "$CLAUDE_DIR/tmux-resurrect" "$WORKSPACE_DIR"
+
+if [ -n "${SESSION_REPO:-}" ] && [ ! -d "$WORKSPACE_DIR/.git" ]; then
+  log "cloning $SESSION_REPO into $WORKSPACE_DIR"
+  if ! run_as_devbox "git clone '$SESSION_REPO' '$WORKSPACE_DIR'"; then
+    log "ERROR: clone of $SESSION_REPO failed — workspace will be empty. Inspect with kubectl exec."
+  fi
+fi
+
+if [ -f /etc/team-claude/config/prompt-initial.md ]; then
+  install_file 0644 /etc/team-claude/config/prompt-initial.md \
+    "$DEVBOX_HOME/.team-claude-prompt-initial.md"
+fi
+
+SSHD_PID=""
+if [ "$ENABLE_SSH" = "true" ]; then
+  if ! is_root; then
+    log "WARNING: ENABLE_SSH=true but container is not running as root — skipping sshd"
+  else
+    if [ -f /etc/team-claude/ssh/authorized_keys ]; then
+      log "installing authorized_keys from mounted Secret"
+      install_file 0600 /etc/team-claude/ssh/authorized_keys "$SSH_DIR/authorized_keys"
+    else
+      log "WARNING: ENABLE_SSH=true but no authorized_keys mounted — SSH will reject all connections"
+    fi
+    ssh-keygen -A >/dev/null 2>&1 || log "WARNING: ssh-keygen -A failed; sshd may refuse connections"
+    log "starting sshd in background"
+    /usr/sbin/sshd -D -e &
+    SSHD_PID=$!
+  fi
+else
+  log "SSH disabled (set ENABLE_SSH=true to enable)"
+fi
+
+log "starting tmux session 'claude-main' on socket $TMUX_SOCKET"
+run_as_devbox "
+  cd \"\$HOME/workspace\" 2>/dev/null || cd \"\$HOME\"
+  ln -sf /etc/team-claude/tmux.conf \"\$HOME/.tmux.conf\"
+  tmux -S \"$TMUX_SOCKET\" -f /etc/team-claude/tmux.conf start-server
+  if ! tmux -S \"$TMUX_SOCKET\" has-session -t claude-main 2>/dev/null; then
+    tmux -S \"$TMUX_SOCKET\" -f /etc/team-claude/tmux.conf new-session -d -s claude-main 'claude; exec bash -l'
+  fi
+"
+
+log "ready — tmux session claude-main is up"
+
+cleanup() {
+  log "shutting down"
+  [ -n "$SSHD_PID" ] && kill -TERM "$SSHD_PID" 2>/dev/null || true
+  run_as_devbox "tmux -S \"$TMUX_SOCKET\" kill-server 2>/dev/null || true"
+  exit 0
+}
+trap cleanup SIGTERM SIGINT
+
+if [ -n "$SSHD_PID" ]; then
+  wait "$SSHD_PID"
+else
+  while true; do sleep 3600 & wait $!; done
+fi

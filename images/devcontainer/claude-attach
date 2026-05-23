@@ -1,0 +1,7 @@
+#!/bin/bash
+# Convenience wrapper: attach to the team-claude tmux session.
+# Resolves the socket via $TMUX_SOCKET env var, falling back to the default
+# location on the persistent volume.
+set -e
+SOCKET="${TMUX_SOCKET:-/home/devbox/.tmux-claude/socket}"
+exec tmux -S "$SOCKET" attach -t claude-main

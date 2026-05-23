@@ -1,0 +1,208 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "team-claude.fullname" . }}
+  labels:
+    {{- include "team-claude.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "team-claude.fullname" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "team-claude.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "team-claude.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "team-claude.serviceAccountName" . }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: devcontainer
+          image: "{{ .Values.devcontainer.image.repository }}:{{ .Values.devcontainer.image.tag }}"
+          imagePullPolicy: {{ .Values.devcontainer.image.pullPolicy }}
+          securityContext:
+            {{- if .Values.ssh.enabled }}
+            runAsUser: 0
+            runAsGroup: 0
+            {{- else }}
+            {{- include "team-claude.restrictedSecurityContext" . | nindent 12 }}
+            {{- end }}
+          env:
+            - name: SESSION_NAME
+              value: {{ include "team-claude.sessionName" . | quote }}
+            - name: SESSION_USER
+              value: {{ .Values.session.user | quote }}
+            - name: SESSION_REPO
+              value: {{ .Values.session.repo | quote }}
+            - name: CLAUDE_CONFIG_DIR
+              value: {{ .Values.claude.configDir | quote }}
+            - name: TMUX_SOCKET
+              value: {{ .Values.tmuxSocket | quote }}
+            - name: ENABLE_SSH
+              value: {{ .Values.ssh.enabled | quote }}
+            {{- with .Values.devcontainer.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            {{- if .Values.ssh.enabled }}
+            - name: ssh
+              containerPort: 22
+              protocol: TCP
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /home/devbox
+            - name: config
+              mountPath: /etc/team-claude/config
+              readOnly: true
+            {{- if and .Values.ssh.enabled .Values.ssh.authorizedKeys }}
+            - name: ssh-keys
+              mountPath: /etc/team-claude/ssh
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.devcontainer.resources | nindent 12 }}
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - 'test -S "$TMUX_SOCKET"'
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - 'test -S "$TMUX_SOCKET"'
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - 'tmux -S "$TMUX_SOCKET" run-shell -t claude-main "~/.tmux/plugins/tmux-resurrect/scripts/save.sh" 2>/dev/null; sleep 2'
+        {{- if .Values.codeServer.enabled }}
+        - name: code-server
+          image: "{{ .Values.codeServer.image.repository }}:{{ .Values.codeServer.image.tag }}"
+          imagePullPolicy: {{ .Values.codeServer.image.pullPolicy }}
+          securityContext:
+            {{- include "team-claude.restrictedSecurityContext" . | nindent 12 }}
+          env:
+            - name: PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "team-claude.fullname" . }}-auth
+                  key: codeServerPassword
+            - name: TMUX_SOCKET
+              value: {{ .Values.tmuxSocket | quote }}
+          args:
+            - "--bind-addr=0.0.0.0:{{ .Values.codeServer.port }}"
+            - "--auth=password"
+            - "--disable-telemetry"
+            - "--disable-update-check"
+            - "/workspace"
+          ports:
+            - name: code-server
+              containerPort: {{ .Values.codeServer.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /workspace
+              subPath: workspace
+            - name: data
+              mountPath: /tmux-host
+              subPath: .tmux-claude
+              readOnly: false
+          resources:
+            {{- toYaml .Values.codeServer.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: code-server
+            initialDelaySeconds: 15
+            periodSeconds: 10
+        {{- end }}
+        {{- if .Values.daemon.enabled }}
+        - name: daemon
+          image: "{{ .Values.daemon.image.repository }}:{{ .Values.daemon.image.tag }}"
+          imagePullPolicy: {{ .Values.daemon.image.pullPolicy }}
+          securityContext:
+            {{- include "team-claude.restrictedSecurityContext" . | nindent 12 }}
+          env:
+            - name: PORT
+              value: {{ .Values.daemon.port | quote }}
+            - name: WS_PATH
+              value: {{ .Values.daemon.wsPath | quote }}
+            - name: HEALTH_PATH
+              value: {{ .Values.daemon.healthPath | quote }}
+            - name: SESSION_NAME
+              value: {{ include "team-claude.sessionName" . | quote }}
+            - name: WORKSPACE_DIR
+              value: /workspace
+            - name: ROOM_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "team-claude.fullname" . }}-auth
+                  key: roomToken
+          ports:
+            - name: daemon
+              containerPort: {{ .Values.daemon.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /workspace
+              subPath: workspace
+          resources:
+            {{- toYaml .Values.daemon.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.daemon.healthPath }}
+              port: daemon
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.daemon.healthPath }}
+              port: daemon
+            initialDelaySeconds: 30
+            periodSeconds: 30
+        {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "team-claude.fullname" . }}-config
+        {{- if and .Values.ssh.enabled .Values.ssh.authorizedKeys }}
+        - name: ssh-keys
+          secret:
+            secretName: {{ include "team-claude.fullname" . }}-ssh
+            defaultMode: 0600
+        {{- end }}
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "team-claude.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

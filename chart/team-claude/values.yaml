@@ -1,0 +1,128 @@
+session:
+  name: ""
+  user: ""
+  repo: ""
+
+domain: example.com
+
+hosts:
+  codeServer: ""
+  daemon: ""
+
+ingress:
+  enabled: true
+  # Ingress class name — override per cluster (nginx, traefik, haproxy, ...).
+  className: haproxy
+  # Annotations are ingress-controller specific. Examples:
+  #   nginx:   nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+  #   haproxy: haproxy.org/timeout-server: "1h"
+  #   traefik: traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  # code-server and the daemon WS both need long-lived connections — set the
+  # appropriate timeout annotation for your controller.
+  annotations: {}
+  tls:
+    enabled: true
+    clusterIssuer: letsencrypt-prod
+    wildcard: false
+    secretName: ""
+
+persistence:
+  enabled: true
+  storageClassName: ""
+  size: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  reclaimPolicy: Retain
+
+devcontainer:
+  image:
+    repository: ghcr.io/devthejo/team-claude-devcontainer
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+  extraEnv: []
+
+codeServer:
+  enabled: true
+  port: 8080
+  image:
+    repository: codercom/code-server
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+daemon:
+  enabled: false
+  port: 7000
+  healthPath: /healthz
+  wsPath: /ws
+  image:
+    repository: ghcr.io/devthejo/team-claude-host
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+ssh:
+  enabled: false
+  authorizedKeys: []
+  serviceType: ClusterIP
+  nodePort: ""
+
+auth:
+  codeServerPassword: ""
+  roomToken: ""
+
+claude:
+  configDir: /home/devbox/.claude
+  promptInitial: ""
+
+tmuxSocket: /home/devbox/.tmux-claude/socket
+
+networkPolicy:
+  enabled: true
+  allowDNS: true
+  allowEgressInternet: true
+  # Namespaces hosting the ingress controller — adapt to your cluster.
+  # The NetworkPolicy will allow ingress traffic only from these namespaces.
+  ingressNamespaces:
+    - ingress-nginx
+    - traefik
+    - haproxy-controller
+    - kube-system
+
+serviceAccount:
+  create: true
+  annotations: {}
+
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  runAsUser: 1000
+  runAsGroup: 1000
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

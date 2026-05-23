@@ -1,0 +1,14 @@
+apiVersion: v2
+name: team-claude
+description: Multi-tenant collaborative Claude Code session — devcontainer + code-server + team-claude-host daemon, packaged for an existing Kubernetes cluster.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - claude
+  - collaboration
+  - devcontainer
+  - code-server
+maintainers:
+  - name: devthejo
+home: https://github.com/devthejo/team-claude
