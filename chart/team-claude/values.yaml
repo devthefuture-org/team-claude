@@ -71,6 +71,10 @@ codeServer:
     limits:
       cpu: "1"
       memory: 1Gi
+  # Extensions installed on first container start via a postStart hook.
+  # Use Open VSX ids (code-server's default registry). Failures are non-fatal.
+  extensions:
+    - anthropic.claude-code
 
 daemon:
   enabled: false

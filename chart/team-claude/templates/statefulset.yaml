@@ -141,6 +141,18 @@ spec:
               readOnly: false
           resources:
             {{- toYaml .Values.codeServer.resources | nindent 12 }}
+          {{- with .Values.codeServer.extensions }}
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    {{- range . }}
+                    code-server --install-extension {{ . | quote }} || true
+                    {{- end }}
+          {{- end }}
           readinessProbe:
             httpGet:
               path: /healthz
