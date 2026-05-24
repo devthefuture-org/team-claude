@@ -14,24 +14,27 @@ if [ ! -f "$CREDS" ] && ! [ -n "${ANTHROPIC_API_KEY:-}" ]; then
 ═════════════════════════════════════════════════════════════════════════
   First-time login required.
 
-  This pod runs remotely. Three working paths, easiest first:
+  This pod runs remotely. Four working paths, easiest first:
 
-  (1) Copy creds from your laptop (RECOMMENDED — bypasses all OAuth bugs):
+  (1) Just run `claude` — when the browser fails to reach
+      http://localhost:<port>/callback?code=…, hand-edit the URL to:
+      https://team-<session>.<domain>/callback?code=…
+      The team-claude daemon's OAuth proxy auto-discovers the localhost
+      port and relays the callback to the claude CLI. If the heuristic
+      picks the wrong port, append &_port=<port> to the URL.
+
+  (2) Copy creds from your laptop (bypasses OAuth entirely):
       On your laptop:    $ claude login          # native OAuth, works
-      Then from there:   $ tcl auth <session>    # copies ~/.claude/.credentials.json into the pod
+      Then from there:   $ tcl auth <session>    # kubectl cp into pod
       Back in this tmux: just type `claude` — it'll pick up the token.
 
-  (2) `claude setup-token` (manual code-paste flow, but currently has a
-      known scope bug — anthropics/claude-code#4540, may show "Paramètre
-      scope manquant" in the browser; option 1 is more reliable today):
-      $ claude setup-token
+  (3) `claude setup-token` — manual code-paste flow, but currently has a
+      known scope bug (anthropics/claude-code#4540) — option 1 or 2 are
+      more reliable today.
 
-  (3) API key:
+  (4) API key:
       $ export ANTHROPIC_API_KEY=sk-ant-...
       $ claude
-
-  Do NOT run plain `claude` first — it'd try the OAuth-with-localhost
-  callback that can't reach your browser from this pod.
 
 ═════════════════════════════════════════════════════════════════════════
 
