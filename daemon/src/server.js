@@ -614,6 +614,12 @@ const server = createServer(async (req, res) => {
   if (req.url.startsWith("/invite/")) {
     const url = new URL(req.url, "http://x");
     const code = url.pathname.slice("/invite/".length);
+    // Rate-limit the whole route before any code lookup so an attacker
+    // can't burn through codes via 404/410 timing channels.
+    if (!rateLimit("invite_route", clientIp(req), req.method === "POST" ? 10 : 30)) {
+      sendHtml(res, 429, renderErrorPage({ sessionName: SESSION_NAME, title: "Trop d'essais", message: "Trop de tentatives. Réessaye dans une minute." }));
+      return;
+    }
     const invite = invites.get(code);
     if (!invite) {
       sendHtml(res, 404, renderErrorPage({ sessionName: SESSION_NAME, title: "Invitation inconnue", message: "Ce code d'invitation n'existe pas (ou plus). Demande au host de t'en envoyer un nouveau." }));
@@ -628,10 +634,6 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (req.method === "POST") {
-      if (!rateLimit("invite_post", clientIp(req), 10)) {
-        sendHtml(res, 429, renderErrorPage({ sessionName: SESSION_NAME, title: "Trop d'essais", message: "Trop de tentatives. Réessaye dans une minute." }));
-        return;
-      }
       let body;
       try { body = await readBody(req); } catch { res.writeHead(413).end("body too large"); return; }
       const pseudo = normalizePseudo(new URLSearchParams(body).get("pseudo"));
