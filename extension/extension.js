@@ -124,7 +124,7 @@ class TeamClaudePanel {
          font-size: var(--vscode-font-size); }
   .row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
   label { display: flex; flex-direction: column; gap: 2px; flex: 1; }
-  input, select, textarea, button {
+  input, textarea, button {
     font: inherit; color: var(--vscode-input-foreground);
     background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent));
     padding: 4px 6px; border-radius: 2px;
@@ -141,10 +141,6 @@ class TeamClaudePanel {
   .feed li { margin: 4px 0; padding: 6px; background: var(--vscode-editorWidget-background); border-radius: 3px; }
   .feed .meta { font-size: 0.8em; opacity: 0.7; margin-bottom: 2px; }
   .feed .body { white-space: pre-wrap; }
-  .participants li { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-  .dot.active { background: var(--vscode-testing-iconQueued, #cca700); }
-  .dot.done   { background: var(--vscode-testing-iconPassed, #4ec9b0); }
   .toolbar { display: flex; gap: 4px; margin: 8px 0; }
   .toolbar button { flex: 1; }
 </style>
@@ -159,31 +155,12 @@ class TeamClaudePanel {
     <button onclick="cmd('copyPrompt')">prompt</button>
   </div>
 
-  <h3>Toi</h3>
+  <h3>Drop un message</h3>
   <div class="row">
     <label>Nom <input id="name"></label>
-    <label>Rôle <input id="role"></label>
-  </div>
-  <label><input type="checkbox" id="hasMore" checked> j'ai encore des arguments</label>
-
-  <h3>Contribuer</h3>
-  <div class="row">
-    <label>Type
-      <select id="kind">
-        <option value="argument">argument</option>
-        <option value="objection">objection</option>
-        <option value="question">question</option>
-        <option value="constraint">contrainte</option>
-        <option value="agreement">accord</option>
-        <option value="clarification">clarification</option>
-      </select>
-    </label>
     <button onclick="sendMsg()">Envoyer</button>
   </div>
-  <textarea id="body" placeholder="Ton message…"></textarea>
-
-  <h3>Participants</h3>
-  <ul id="participants" class="participants"><li class="status">(aucun)</li></ul>
+  <textarea id="body" placeholder="Ton message… (Ctrl/Cmd+Entrée)"></textarea>
 
   <h3>Messages récents</h3>
   <ul id="feed" class="feed"><li class="status">(aucun)</li></ul>
@@ -192,53 +169,36 @@ class TeamClaudePanel {
   const vscode = acquireVsCodeApi();
   const $ = (id) => document.getElementById(id);
   let speaker = vscode.getState()?.speaker || crypto.randomUUID();
-  vscode.setState({ ...(vscode.getState()||{}), speaker });
-  const saved = vscode.getState() || {};
+  const saved  = vscode.getState() || {};
+  vscode.setState({ ...saved, speaker });
   $("name").value = saved.name || "";
-  $("role").value = saved.role || "";
-  $("hasMore").checked = saved.hasMore ?? true;
-  $("name").addEventListener("input", persist);
-  $("role").addEventListener("input", persist);
-  $("hasMore").addEventListener("change", () => { persist(); sendStatus(); });
-  function persist() {
-    vscode.setState({ speaker, name: $("name").value, role: $("role").value, hasMore: $("hasMore").checked });
-  }
+  $("name").addEventListener("input", () => {
+    vscode.setState({ ...vscode.getState(), name: $("name").value });
+  });
   function cmd(c) { vscode.postMessage({ cmd: c }); }
-  function sendStatus() {
-    vscode.postMessage({ cmd: "send", payload: {
-      speaker, name: $("name").value, role: $("role").value,
-      kind: "status", hasMoreArguments: $("hasMore").checked,
-    }});
-  }
   function sendMsg() {
     const body = $("body").value.trim();
-    if (!body) return;
-    vscode.postMessage({ cmd: "send", payload: {
-      speaker, name: $("name").value, role: $("role").value,
-      kind: $("kind").value, body, hasMoreArguments: $("hasMore").checked,
-    }});
+    const name = $("name").value.trim();
+    if (!body || !name) return;
+    vscode.postMessage({ cmd: "send", payload: { speaker, name, body } });
     $("body").value = "";
   }
+  $("body").addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); sendMsg(); }
+  });
   function escapeHtml(s) {
     return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   }
-  function renderParticipants(list) {
-    const ul = $("participants");
-    if (!list?.length) { ul.innerHTML = '<li class="status">(aucun)</li>'; return; }
-    ul.innerHTML = list.map(p =>
-      \`<li><span class="dot \${p.hasMoreArguments ? "active" : "done"}"></span>
-        <strong>\${escapeHtml(p.name)}</strong>
-        \${p.role ? \`<span class="status">/ \${escapeHtml(p.role)}</span>\` : ""}</li>\`
-    ).join("");
+  function formatTime(ts) {
+    try { return new Date(ts).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"}); } catch { return ""; }
   }
   function appendEvent(ev) {
-    if (!["argument","objection","question","constraint","agreement","clarification"].includes(ev.kind)) return;
+    if (!ev.body) return;
     const ul = $("feed");
     const placeholder = ul.querySelector(".status"); if (placeholder) placeholder.remove();
     const li = document.createElement("li");
     li.innerHTML = \`<div class="meta"><strong>\${escapeHtml(ev.name||ev.speaker)}</strong>
-      \${ev.role ? \`<span>/ \${escapeHtml(ev.role)}</span>\` : ""}
-      <span>/ \${ev.kind}</span></div>
+      <span>· \${formatTime(ev.ts)}</span></div>
       <div class="body">\${escapeHtml(ev.body)}</div>\`;
     ul.prepend(li);
     while (ul.children.length > 30) ul.lastChild.remove();
@@ -249,8 +209,6 @@ class TeamClaudePanel {
       $("status").textContent = msg.message;
       $("status").className = "status " + (msg.message === "connected" ? "online" : "offline");
     } else if (msg.kind === "hello" || msg.kind === "event") {
-      const snap = msg.state || msg.snapshot;
-      if (snap) renderParticipants(snap.participants);
       if (msg.ev) appendEvent(msg.ev);
     }
   });

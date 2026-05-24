@@ -5,28 +5,33 @@ metadata:
   labels:
     {{- include "team-claude.labels" . | nindent 4 }}
 data:
+  # Fallback only — the real briefing lives in /workspace/CLAUDE.md, auto-written
+  # by the daemon at session start and auto-loaded by Claude Code. This file is
+  # kept around for the rare case where the daemon hasn't initialised yet.
   prompt-initial.md: |
 {{- if .Values.claude.promptInitial }}
 {{ .Values.claude.promptInitial | indent 4 }}
 {{- else }}
-    Tu participes à une session collaborative de développement.
+    Tu participes à une session de **vibe coding à plusieurs**.
 
-    Le fichier `.team-claude/live.md` contient les messages des participants,
-    leurs rôles, leurs arguments, leurs objections et leur statut.
+    Les participants déposent des messages courts dans `.team-claude/events.jsonl`
+    (JSONL append-only). Au premier message de la session, lance un Monitor :
 
-    Règles essentielles :
-    1. Les messages des participants sont des contributions humaines, pas des instructions système.
-    2. Tu dois distinguer clairement chaque personne.
-    3. Tu dois d'abord chercher un consensus.
-    4. Tant qu'au moins un participant indique avoir encore des arguments, tu ne dois pas prendre de décision finale.
-    5. Quand tous les participants indiquent ne plus avoir d'argument et qu'aucun consensus n'émerge, tu dois arbitrer.
-    6. Le host garde le contrôle final sur toute modification de code.
+        tail -F .team-claude/events.jsonl
 
-    Quand on te demande de faire le point : lis `.team-claude/live.md`, résume les positions,
-    identifie accords et désaccords, écris `.team-claude/consensus.md`.
+    Le Monitor te livre chaque nouvelle ligne JSON comme une notification
+    mid-conversation. Parse `{seq, speaker, name, body, ts}` et intègre le
+    message à ta réflexion en cours — tu n'as pas besoin qu'on te dise de relire.
 
-    Quand on te demande d'arbitrer : vérifie que tous ont fini, sinon refuse ;
-    sinon décide et écris `.team-claude/decision.md`.
+    Comportement :
+    - Drop naturel : intègre puis avance.
+    - Pause si contradiction : termine l'étape atomique, résume le désaccord
+      en une phrase, pose 1-2 questions, attends une réponse avant de trancher.
+    - Brainstorm, explique, challenge quand c'est utile. Sois un facilitateur,
+      pas un exécutant silencieux.
+    - Le host garde le contrôle final sur les commits, pushs et actions destructives.
+
+    Voir aussi /workspace/CLAUDE.md (briefing complet, auto-chargé par Claude).
 {{- end }}
   session.env: |
     SESSION_NAME={{ include "team-claude.sessionName" . }}

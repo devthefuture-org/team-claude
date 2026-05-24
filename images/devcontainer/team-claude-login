@@ -36,4 +36,18 @@ EOF
   exec bash -l
 fi
 
+cat <<'EOF'
+─────────────────────────────────────────────────────────────────────────
+  team-claude — collaborative session ready.
+
+  At your first prompt, launch a Monitor on the participants feed so
+  Claude receives messages in real-time without you having to nudge:
+
+      tail -F .team-claude/events.jsonl
+
+  See CLAUDE.md (in the workspace root) for the full facilitation brief.
+─────────────────────────────────────────────────────────────────────────
+
+EOF
+
 exec claude "$@"

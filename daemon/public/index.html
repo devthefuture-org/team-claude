@@ -16,42 +16,13 @@
   </header>
 
   <main>
-    <section id="me">
-      <h2>Toi</h2>
+    <section id="compose">
+      <h2>Drop un message</h2>
       <div class="row">
         <label>Nom <input id="name" placeholder="Alice" autocomplete="name"></label>
-        <label>Rôle <input id="role" placeholder="backend"></label>
-      </div>
-      <div class="row">
-        <label class="checkbox">
-          <input type="checkbox" id="hasMore" checked>
-          j'ai encore des arguments
-        </label>
-        <button id="presence-btn" type="button" disabled>Rejoindre la session</button>
-      </div>
-    </section>
-
-    <section id="compose">
-      <h2>Contribuer</h2>
-      <div class="row">
-        <label>Type
-          <select id="kind">
-            <option value="argument">argument</option>
-            <option value="objection">objection</option>
-            <option value="question">question</option>
-            <option value="constraint">contrainte</option>
-            <option value="agreement">accord</option>
-            <option value="clarification">clarification</option>
-          </select>
-        </label>
         <button id="send-btn" type="button" disabled>Envoyer</button>
       </div>
-      <textarea id="body" rows="4" placeholder="Ton message…"></textarea>
-    </section>
-
-    <section id="participants">
-      <h2>Participants</h2>
-      <ul id="participants-list" class="muted">(aucun)</ul>
+      <textarea id="body" rows="4" placeholder="Écris ton message ici… (Ctrl/Cmd+Entrée pour envoyer)"></textarea>
     </section>
 
     <section id="feed">

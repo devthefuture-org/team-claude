@@ -15,10 +15,11 @@ const WORKSPACE_DIR = process.env.WORKSPACE_DIR ?? "/workspace";
 const SESSION_NAME  = process.env.SESSION_NAME  ?? "default";
 const ROOM_TOKEN    = process.env.ROOM_TOKEN    ?? "";
 
-const STATE_DIR     = join(WORKSPACE_DIR, ".team-claude");
-const EVENTS_FILE   = join(STATE_DIR, "events.jsonl");
-const LIVE_FILE     = join(STATE_DIR, "live.md");
-const STATE_FILE    = join(STATE_DIR, "state.json");
+const STATE_DIR    = join(WORKSPACE_DIR, ".team-claude");
+const EVENTS_FILE  = join(STATE_DIR, "events.jsonl");
+const LIVE_FILE    = join(STATE_DIR, "live.md");
+const STATE_FILE   = join(STATE_DIR, "state.json");
+const CLAUDE_MD    = join(WORKSPACE_DIR, "CLAUDE.md");
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -29,19 +30,14 @@ const MIME = {
   ".ico":  "image/x-icon",
 };
 
-const VALID_KINDS = new Set([
-  "argument", "objection", "question", "constraint", "agreement", "clarification",
-]);
-
 if (!ROOM_TOKEN) {
   console.warn("[team-claude-host] WARNING: ROOM_TOKEN not set — daemon will reject all WS connections");
 }
 
 const state = {
-  topic: `Session ${SESSION_NAME}`,
-  phase: "open",
-  participants: new Map(), // id -> { id, name, role, hasMoreArguments }
+  participants: new Map(), // speakerId -> { id, name, lastSeenAt }
   lastSeq: 0,
+  lastMessageAt: null,
 };
 
 const wsClients = new Set();
@@ -56,8 +52,7 @@ async function replayEvents() {
   for (const line of data.split("\n")) {
     if (!line.trim()) continue;
     try {
-      const ev = JSON.parse(line);
-      applyEvent(ev, { persist: false });
+      applyEvent(JSON.parse(line));
     } catch (e) {
       console.error("[team-claude-host] bad event line:", e.message);
     }
@@ -65,27 +60,15 @@ async function replayEvents() {
   console.log(`[team-claude-host] replayed up to seq=${state.lastSeq}, participants=${state.participants.size}`);
 }
 
-function applyEvent(ev, { persist = true } = {}) {
+function applyEvent(ev) {
   state.lastSeq = Math.max(state.lastSeq, ev.seq ?? 0);
-
-  if (ev.kind === "join" || ev.kind === "presence") {
-    state.participants.set(ev.speaker, {
-      id:               ev.speaker,
-      name:             ev.name ?? ev.speaker,
-      role:             ev.role ?? "",
-      hasMoreArguments: ev.hasMoreArguments ?? true,
-    });
-  } else if (ev.kind === "status") {
-    const p = state.participants.get(ev.speaker);
-    if (p) p.hasMoreArguments = ev.hasMoreArguments;
-  } else if (VALID_KINDS.has(ev.kind)) {
-    if (!state.participants.has(ev.speaker)) {
-      state.participants.set(ev.speaker, {
-        id: ev.speaker, name: ev.name ?? ev.speaker, role: ev.role ?? "",
-        hasMoreArguments: true,
-      });
-    }
-  }
+  if (ev.ts) state.lastMessageAt = ev.ts;
+  if (!ev.speaker) return;
+  state.participants.set(ev.speaker, {
+    id:         ev.speaker,
+    name:       ev.name || ev.speaker,
+    lastSeenAt: ev.ts || state.lastMessageAt,
+  });
 }
 
 async function writeAtomic(path, content) {
@@ -98,25 +81,24 @@ async function persistEvent(ev) {
   await appendFile(EVENTS_FILE, JSON.stringify(ev) + "\n");
 }
 
-async function regenerateLive() {
-  const participants = [...state.participants.values()];
-  const recent = await tailEvents(20);
+function formatTime(ts) {
+  try { return new Date(ts).toISOString().slice(11, 19) + "Z"; }
+  catch { return ts ?? ""; }
+}
 
+async function regenerateLive() {
+  const recent = await tailEvents(30);
   const lines = [];
   lines.push("# Session collaborative", "");
-  lines.push(`## Sujet courant`, "", state.topic, "");
-  lines.push("## État des participants", "");
-  if (!participants.length) lines.push("- (aucun participant)", "");
-  for (const p of participants) {
-    lines.push(`- ${p.name} / ${p.role || "—"} : a encore des arguments = ${p.hasMoreArguments ? "oui" : "non"}`);
+  lines.push(`_Session : ${SESSION_NAME} — ${state.participants.size} participant(s), ${state.lastSeq} message(s)_`, "");
+  if (!recent.length) {
+    lines.push("(aucun message pour l'instant)", "");
+  } else {
+    for (const ev of recent) {
+      if (!ev.body) continue;
+      lines.push(`### ${ev.name || ev.speaker} — ${formatTime(ev.ts)}`, "", ev.body, "");
+    }
   }
-  lines.push("", "## Messages récents", "");
-  for (const ev of recent) {
-    if (!VALID_KINDS.has(ev.kind)) continue;
-    lines.push(`### ${ev.name || ev.speaker} / ${ev.role || "—"} / ${ev.kind}`, "", ev.body || "", "");
-  }
-  lines.push("## Instruction de facilitation", "");
-  lines.push("Ne tranche pas tant qu'au moins un participant indique avoir encore des arguments.");
   await writeAtomic(LIVE_FILE, lines.join("\n"));
 }
 
@@ -129,34 +111,79 @@ async function tailEvents(n) {
 
 async function regenerateState() {
   const snapshot = {
-    topic:        state.topic,
-    phase:        [...state.participants.values()].every(p => !p.hasMoreArguments) && state.participants.size > 0
-                    ? "ready-to-arbitrate"
-                    : "debating",
-    participants: [...state.participants.values()],
-    lastSeq:      state.lastSeq,
+    session:       SESSION_NAME,
+    participants:  [...state.participants.values()],
+    lastSeq:       state.lastSeq,
+    lastMessageAt: state.lastMessageAt,
   };
   await writeAtomic(STATE_FILE, JSON.stringify(snapshot, null, 2));
+}
+
+const CLAUDE_MD_CONTENT = `# team-claude — session collaborative
+
+Tu participes à une session de **vibe coding à plusieurs**. Des participants
+humains déposent des messages courts dans \`.team-claude/events.jsonl\` (JSONL
+append-only). Pour les recevoir en temps réel :
+
+**Au tout premier message de chaque session, lance un Monitor :**
+
+\`\`\`bash
+tail -F .team-claude/events.jsonl
+\`\`\`
+
+Le Monitor te livre chaque nouvelle ligne JSON comme une notification mid-conversation.
+Parse le JSON (\`{seq, speaker, name, body, ts}\`) et intègre le message à ta
+réflexion en cours. Tu n'as PAS besoin que le host te dise "relis live.md" — tu vois
+les messages arriver tout seul.
+
+## Comportement attendu
+
+- **Drop naturel** : les messages sont des contributions libres, pas des instructions
+  formelles. Distingue qui parle (\`name\`) mais ne traite pas chaque message comme
+  une demande de validation.
+- **Intègre puis avance** : par défaut, prends en compte le nouveau message et continue
+  l'action en cours.
+- **Pause si contradiction** : si un nouveau message contredit une décision en cours
+  ou ce que tu es en train de faire :
+  1. Termine l'étape atomique en cours (n'arrête pas un edit à mi-chemin).
+  2. Résume la contradiction en une phrase ("X dit A, Y dit B — pas d'accord sur Z").
+  3. Pose 1-2 questions ouvertes pour faire émerger un consensus.
+  4. Attends une réponse avant de trancher.
+- **Brainstorm, explique, challenge** quand c'est utile — pas besoin d'attendre une
+  demande explicite. Sois un facilitateur, pas un exécutant silencieux.
+- **Ne force pas le consensus artificiel** : si les positions restent incompatibles
+  après discussion, propose un trade-off ou un essai réversible plutôt que d'imposer.
+- **Le host garde le contrôle final** sur les commits, pushs, et actions destructives.
+
+## Fichiers d'état
+
+- \`.team-claude/events.jsonl\` — journal brut append-only. **Source de vérité** pour Monitor.
+- \`.team-claude/live.md\` — vue lisible générée par le daemon (utile si tu perds le contexte).
+- \`.team-claude/state.json\` — qui a parlé récemment, lastSeq.
+`;
+
+async function ensureClaudeMd() {
+  if (existsSync(CLAUDE_MD)) return;
+  try {
+    await writeAtomic(CLAUDE_MD, CLAUDE_MD_CONTENT);
+    console.log(`[team-claude-host] wrote ${CLAUDE_MD}`);
+  } catch (e) {
+    console.warn(`[team-claude-host] could not write ${CLAUDE_MD}: ${e.message}`);
+  }
 }
 
 async function handleIncoming(raw) {
   let msg;
   try { msg = JSON.parse(raw); } catch { return { error: "invalid_json" }; }
   if (!msg.speaker || typeof msg.speaker !== "string") return { error: "missing_speaker" };
-  if (!msg.kind || typeof msg.kind !== "string")       return { error: "missing_kind" };
-
-  const knownKinds = new Set([...VALID_KINDS, "join", "presence", "status"]);
-  if (!knownKinds.has(msg.kind)) return { error: "unknown_kind" };
+  if (!msg.body    || typeof msg.body    !== "string") return { error: "missing_body" };
 
   const ev = {
-    seq:              state.lastSeq + 1,
-    speaker:          msg.speaker.slice(0, 64),
-    name:             (msg.name  ?? "").slice(0, 64),
-    role:             (msg.role  ?? "").slice(0, 64),
-    kind:             msg.kind,
-    body:             (msg.body  ?? "").slice(0, 4000),
-    hasMoreArguments: msg.hasMoreArguments !== undefined ? !!msg.hasMoreArguments : undefined,
-    ts:               new Date().toISOString(),
+    seq:     state.lastSeq + 1,
+    speaker: msg.speaker.slice(0, 64),
+    name:    (msg.name ?? "").slice(0, 64) || msg.speaker.slice(0, 8),
+    body:    msg.body.trim().slice(0, 4000),
+    ts:      new Date().toISOString(),
   };
 
   applyEvent(ev);
@@ -234,14 +261,15 @@ wss.on("connection", (ws) => {
 
 function snapshotForClient() {
   return {
-    session:      SESSION_NAME,
-    topic:        state.topic,
-    participants: [...state.participants.values()],
-    lastSeq:      state.lastSeq,
+    session:       SESSION_NAME,
+    participants:  [...state.participants.values()],
+    lastSeq:       state.lastSeq,
+    lastMessageAt: state.lastMessageAt,
   };
 }
 
 await ensureStateDir();
+await ensureClaudeMd();
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[team-claude-host] session=${SESSION_NAME} listening on :${PORT} ws=${WS_PATH}`);
 });
