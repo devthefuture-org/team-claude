@@ -5,6 +5,7 @@ import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { startClaudeStream } from "./claude-stream.js";
+import { findOAuthCallbackPort, proxyToLocalhost } from "./oauth-proxy.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = resolve(__dirname, "..", "public");
@@ -236,6 +237,15 @@ async function safeServeStatic(req, res) {
   }
 }
 
+// Ports owned by other pod-local services that the OAuth proxy must skip
+// when auto-discovering the claude CLI's ephemeral callback listener.
+const RESERVED_LOCAL_PORTS = new Set([
+  PORT,    // ourselves
+  8080,    // code-server
+  2222,    // sshd (when ssh.enabled)
+  22,
+]);
+
 const server = createServer(async (req, res) => {
   if (req.url.startsWith(HEALTH_PATH)) {
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -245,6 +255,33 @@ const server = createServer(async (req, res) => {
   if (req.url === "/session.json") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ session: SESSION_NAME, wsPath: WS_PATH }));
+    return;
+  }
+  // OAuth callback proxy: claude (and similar) opens a localhost callback
+  // server on a random port; rewrite the host portion of the redirect URL
+  // to this daemon's public URL and we relay to the actual port. The port
+  // is auto-discovered by scanning /proc/net/tcp for ephemeral listeners,
+  // or can be supplied explicitly via ?_port=<n>.
+  if (req.url.startsWith("/callback")) {
+    const url = new URL(req.url, "http://x");
+    let port = parseInt(url.searchParams.get("_port") ?? "", 10);
+    if (port) {
+      // Strip the hint from the upstream URL so the CLI server doesn't see it.
+      url.searchParams.delete("_port");
+      req.url = url.pathname + (url.search ? "?" + url.searchParams.toString() : "");
+    } else {
+      port = await findOAuthCallbackPort({ reservedPorts: RESERVED_LOCAL_PORTS });
+    }
+    if (!port) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("oauth-proxy: no localhost callback server detected.\n"
+        + "If `claude` is currently waiting on an OAuth callback, retry with\n"
+        + "  /callback?...&_port=<port>\n"
+        + "where <port> is the localhost port shown in the terminal URL.\n");
+      return;
+    }
+    console.log(`[team-claude-host/oauth-proxy] relaying ${req.method} ${req.url} → 127.0.0.1:${port}`);
+    proxyToLocalhost(port, req, res);
     return;
   }
   await safeServeStatic(req, res);
