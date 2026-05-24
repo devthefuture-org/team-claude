@@ -44,26 +44,25 @@ COPY --from=ext-build /ext/team-claude.vsix /opt/team-claude.vsix
 RUN su coder -s /bin/sh -c "EXTENSIONS_GALLERY='$EXTENSIONS_GALLERY' code-server --install-extension /opt/team-claude.vsix" \
     && chown -R 1000:1000 /home/coder/.local/share/code-server/extensions
 
-# Pin anthropic.claude-code by downloading the exact VSIX from Marketplace
-# (the `--install-extension id@version` syntax isn't supported by this
-# code-server release; only `id` or a path). The extension is partly broken
-# in browser-based VS Code (chat panel uses web-unsupported Chat APIs;
-# perf 2-4× slower than the CLI per anthropics/claude-code#15172), but kept
-# for its sign-in flow (code-paste auth, no localhost redirect) and as a
-# fallback UI. For real coding, prefer the claude CLI in tmux via
-# `claude-attach` in the integrated terminal.
-ARG ANTHROPIC_EXT_VERSION=2.1.150
-RUN curl -fsSL -o /opt/anthropic-claude-code.vsix \
-      "https://anthropic.gallery.vsassets.io/_apis/public/gallery/publisher/anthropic/extension/claude-code/${ANTHROPIC_EXT_VERSION}/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage" \
-    && su coder -s /bin/sh -c "code-server --install-extension /opt/anthropic-claude-code.vsix --force" \
-    && chown -R 1000:1000 /home/coder/.local/share/code-server/extensions
-
-# Workaround for anthropics/claude-code#51677: rewrite the webview CSS so
+# anthropic.claude-code is intentionally NOT pre-installed. Even with the
+# codicon CSS patch (see below), the chat panel uses VS Code Chat APIs
+# (chatSessionStore, chatEditingSession, type "local") that aren't fully
+# implemented in the web extension host, so the panel is unreliable in
+# browser. For the full Anthropic UI, attach VS Code Desktop to the pod
+# via the Kubernetes extension. In the browser, drive Claude from the CLI
+# in tmux via `claude-attach` in the integrated terminal.
+#
+# The codicon-CSS patch script is kept in the image so you can install the
+# extension manually and then patch it in one go:
+#
+#   code-server --install-extension anthropic.claude-code
+#   python3 /usr/local/bin/patch-anthropic-codicon
+#   # then hard-refresh your code-server tab
+#
+# (Workaround for anthropics/claude-code#51677: rewrite the webview CSS so
 # the codicon @font-face loads from a sibling codicon.ttf instead of a
-# data: URI (forbidden by the webview CSP). Without this, icon glyphs
-# render as empty squares.
+# data: URI that the webview CSP blocks.)
 COPY images/code-server/patch-anthropic-codicon.py /usr/local/bin/patch-anthropic-codicon
-RUN chmod +x /usr/local/bin/patch-anthropic-codicon \
-    && su coder -s /bin/sh -c "python3 /usr/local/bin/patch-anthropic-codicon"
+RUN chmod +x /usr/local/bin/patch-anthropic-codicon
 
 USER 1000:1000

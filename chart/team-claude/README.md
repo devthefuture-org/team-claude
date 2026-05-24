@@ -86,23 +86,36 @@ via `tmux -S /tmux-host/socket attach -t claude-main` to interact with Claude
 live.
 
 > **Heads-up on the official `anthropic.claude-code` extension in code-server.**
-> It's pre-installed (kept for its code-paste sign-in flow which works in
-> browser, unlike `claude` CLI's localhost OAuth). The image runs an
-> install-time CSS patch to fix the codicon-font issue
-> ([#51677](https://github.com/anthropics/claude-code/issues/51677): webview
-> CSP rejects the `data:` URI used in the @font-face). Caveats that remain:
-> - The chat panel itself uses VS Code Chat APIs that aren't fully implemented
->   in the web extension host — it may render but operations beyond auth are
->   flaky. Use it for sign-in, then drive Claude from the CLI in tmux.
-> - 2-4× slower than the CLI when it does work
->   ([#15172](https://github.com/anthropics/claude-code/issues/15172), closed
->   as "not planned").
+> It's NOT pre-installed. The chat panel uses VS Code Chat APIs
+> (chatSessionStore, chatEditingSession, type "local") that aren't fully
+> implemented in the web extension host, so it's unreliable in browser
+> regardless of the [codicon-font CSP](https://github.com/anthropics/claude-code/issues/51677)
+> issue (which we have a patch for). Also 2-4× slower than the CLI when it
+> does work ([#15172](https://github.com/anthropics/claude-code/issues/15172),
+> closed as "not planned").
 >
-> The robust path in the browser is `claude-attach` in the integrated terminal
-> — it joins the shared tmux session where Claude already runs, with daemon
-> streaming visible to participants. For the full Anthropic native UI, attach
-> VS Code Desktop to the pod via the Kubernetes extension ("Attach Visual
-> Studio Code").
+> **For auth on a remote pod:** the local OAuth flow on your laptop works
+> fine — run `claude login` locally, then `./scripts/tcl auth <session>` to
+> copy `~/.claude/.credentials.json` into the pod. The token lives on the
+> PVC and survives restarts. `claude setup-token` has a known scope-missing
+> bug ([#4540](https://github.com/anthropics/claude-code/issues/4540)) so
+> avoid it for now.
+>
+> **For the editor + chat UX:** the robust path in the browser is
+> `claude-attach` in the integrated terminal — it joins the shared tmux
+> session where Claude already runs, with daemon streaming visible to
+> participants. For the full Anthropic native UI, attach VS Code Desktop
+> to the pod via the Kubernetes extension ("Attach Visual Studio Code").
+>
+> **Want to try the extension anyway?** It's a 2-command install (the image
+> ships the codicon CSS patch ready to apply):
+>
+> ```bash
+> kubectl exec -n team-claude session-<name>-0 -c code-server -- \
+>   sh -c "code-server --install-extension anthropic.claude-code && \
+>          python3 /usr/local/bin/patch-anthropic-codicon"
+> # then hard-refresh your code-server tab
+> ```
 
 **Drive-by feedback (PMs, designers, external reviewers, junior devs)** —
 share the **participants URL with token**. They get a strip-down view:
