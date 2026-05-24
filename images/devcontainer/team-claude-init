@@ -14,14 +14,17 @@ is_root() { [ "$(id -u)" = "0" ]; }
 
 # Create a directory tree owned by the devbox user. When running as root we use
 # `install` so ownership is set atomically; non-root we just mkdir and rely on
-# the PVC's fsGroup (1000) to make the path writable.
+# the PVC's fsGroup (1000) to make the path writable. chmod is best-effort: a
+# sibling container (eg. the daemon writing CLAUDE.md) may have created the
+# workspace dir under a different UID first — the path is functional via the
+# shared fsGroup, the mode bits are cosmetic.
 makedirs() {
   local mode="$1"; shift
   if is_root; then
     install -d -o devbox -g devbox -m "$mode" "$@"
   else
     mkdir -p "$@"
-    chmod "$mode" "$@"
+    chmod "$mode" "$@" 2>/dev/null || true
   fi
 }
 
