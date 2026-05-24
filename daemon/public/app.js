@@ -8,7 +8,6 @@ const els = {
   name:          $("name"),
   body:          $("body"),
   sendBtn:       $("send-btn"),
-  feed:          $("feed-list"),
   stream:        $("stream-list"),
   thinking:      $("thinking"),
   thinkingVerb:  document.querySelector(".thinking-verb"),
@@ -41,7 +40,7 @@ function formatTime(ts) {
   catch { return ""; }
 }
 
-// -------------------------------------------------------------- Claude stream
+// ---------------------------------------------------------- Thinking spinner
 
 const THINKING_VERBS = [
   "Réfléchit", "Cogite", "Médite", "Élucubre", "Mijote",
@@ -71,13 +70,22 @@ function animateDots() {
   els.thinkingDots.textContent = cur.length >= 3 ? "" : cur + ".";
 }
 
+// ----------------------------------------------------------------- Stream
+
 function clearStreamPlaceholder() {
   const ph = els.stream.querySelector(".muted");
   if (ph) ph.remove();
 }
 
-function appendStreamEntry(entry) {
+function streamAppend(li) {
   clearStreamPlaceholder();
+  const atBottom = els.stream.scrollTop + els.stream.clientHeight >= els.stream.scrollHeight - 20;
+  els.stream.appendChild(li);
+  while (els.stream.children.length > 300) els.stream.firstChild.remove();
+  if (atBottom) els.stream.scrollTop = els.stream.scrollHeight;
+}
+
+function appendClaudeEntry(entry) {
   const li = document.createElement("li");
   if (entry.role === "user") {
     li.className = "user";
@@ -89,38 +97,42 @@ function appendStreamEntry(entry) {
       <div class="body">${escapeHtml(entry.text)}</div>`;
   } else if (entry.role === "assistant" && entry.tool) {
     li.className = "tool";
-    li.innerHTML = `<div class="body"><span class="tool-name">🔧 ${escapeHtml(entry.tool)}</span>${entry.summary ? " " + escapeHtml(entry.summary) : ""}</div>`;
+    li.innerHTML = `<div class="meta">${formatTime(entry.ts)} · 🔧 ${escapeHtml(entry.tool)}</div>
+      ${entry.summary ? `<div class="body">${escapeHtml(entry.summary)}</div>` : ""}`;
   } else {
     return;
   }
-  const atBottom = els.stream.scrollTop + els.stream.clientHeight >= els.stream.scrollHeight - 20;
-  els.stream.appendChild(li);
-  while (els.stream.children.length > 200) els.stream.firstChild.remove();
-  if (atBottom) els.stream.scrollTop = els.stream.scrollHeight;
+  streamAppend(li);
 }
 
-function applyBacklog(backlog) {
-  els.stream.innerHTML = "";
-  if (!backlog?.length) {
-    els.stream.innerHTML = '<li class="muted">(en attente d\'une réponse de Claude…)</li>';
-    return;
-  }
-  for (const e of backlog) appendStreamEntry(e);
-  els.stream.scrollTop = els.stream.scrollHeight;
-}
-
-// ---------------------------------------------------------- Participant feed
-
-function appendParticipantEvent(ev) {
-  const placeholder = els.feed.querySelector(".muted");
-  if (placeholder) placeholder.remove();
+function appendParticipantEntry(ev) {
   if (!ev.body) return;
   const li = document.createElement("li");
-  li.innerHTML = `<div class="meta"><strong>${escapeHtml(ev.name || ev.speaker)}</strong>
-    <span class="muted">· ${formatTime(ev.ts)}</span></div>
+  li.className = "participant";
+  li.innerHTML = `<div class="meta">${formatTime(ev.ts)} · <strong>${escapeHtml(ev.name || ev.speaker)}</strong></div>
     <div class="body">${escapeHtml(ev.body)}</div>`;
-  els.feed.prepend(li);
-  while (els.feed.children.length > 30) els.feed.lastChild.remove();
+  streamAppend(li);
+}
+
+function applyBacklog(claudeBacklog, participantBacklog) {
+  els.stream.innerHTML = "";
+  const merged = [
+    ...(claudeBacklog || []).map(e => ({ kind: "claude", ts: e.ts, e })),
+    ...(participantBacklog || []).map(e => ({ kind: "participant", ts: e.ts, e })),
+  ].sort((a, b) => {
+    const ta = Date.parse(a.ts) || 0;
+    const tb = Date.parse(b.ts) || 0;
+    return ta - tb;
+  });
+  if (!merged.length) {
+    els.stream.innerHTML = '<li class="muted">(en attente d\'activité…)</li>';
+    return;
+  }
+  for (const item of merged) {
+    if (item.kind === "claude") appendClaudeEntry(item.e);
+    else                        appendParticipantEntry(item.e);
+  }
+  els.stream.scrollTop = els.stream.scrollHeight;
 }
 
 function renderSnapshot(snap) {
@@ -146,15 +158,15 @@ function connect() {
     switch (msg.kind) {
       case "hello":
         renderSnapshot(msg.state);
-        applyBacklog(msg.claudeBacklog);
+        applyBacklog(msg.claudeBacklog, msg.participantBacklog);
         showThinking(msg.claudeStatus?.state === "thinking");
         break;
       case "event":
         renderSnapshot(msg.snapshot);
-        if (msg.ev) appendParticipantEvent(msg.ev);
+        if (msg.ev) appendParticipantEntry(msg.ev);
         break;
       case "claude-event":
-        if (msg.entry) appendStreamEntry(msg.entry);
+        if (msg.entry) appendClaudeEntry(msg.entry);
         break;
       case "claude-status":
         showThinking(msg.status?.state === "thinking");

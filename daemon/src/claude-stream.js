@@ -38,6 +38,11 @@ function transformEntry(raw) {
   if (raw.type === "user" && raw.message?.role === "user") {
     const txt = extractText(raw.message.content);
     if (!txt) return null;
+    // Claude's Monitor skill injects each participant drop into the
+    // conversation as a synthetic user message wrapped in <task-notification>.
+    // The participant event itself is already streamed via kind:"event", so
+    // skip the duplicate to avoid two cards for the same drop.
+    if (txt.includes("<task-notification>")) return null;
     return { role: "user", text: txt, ts: raw.timestamp };
   }
   if (raw.type === "assistant" && raw.message?.role === "assistant") {

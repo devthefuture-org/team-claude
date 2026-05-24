@@ -56,6 +56,10 @@ const CLAUDE_BUFFER_MAX = 200;
 // Dedup set keyed in sync with claudeBuffer — protects against
 // `tail -F` respawn / Claude session rotation re-emitting old entries.
 const seenClaudeKeys = new Set();
+// Mirror buffer of recent participant events so late-joiners can see the
+// drop history interleaved with the claude transcript by timestamp.
+const participantBuffer = [];
+const PARTICIPANT_BUFFER_MAX = 50;
 let claudeStatus = { state: "idle", since: null };
 
 const wsClients = new Set();
@@ -91,6 +95,10 @@ async function replayEvents() {
 function applyEvent(ev) {
   state.lastSeq = Math.max(state.lastSeq, ev.seq ?? 0);
   if (ev.ts) state.lastMessageAt = ev.ts;
+  if (ev.body) {
+    participantBuffer.push(ev);
+    while (participantBuffer.length > PARTICIPANT_BUFFER_MAX) participantBuffer.shift();
+  }
   if (!ev.speaker) return;
   state.participants.set(ev.speaker, {
     id:         ev.speaker,
@@ -316,9 +324,10 @@ wss.on("connection", (ws) => {
   wsClients.add(ws);
   ws.on("close", () => wsClients.delete(ws));
   ws.send(JSON.stringify({
-    kind:           "hello",
-    state:          snapshotForClient(),
-    claudeBacklog:  claudeBuffer,
+    kind:               "hello",
+    state:              snapshotForClient(),
+    claudeBacklog:      claudeBuffer,
+    participantBacklog: participantBuffer,
     claudeStatus,
   }));
 

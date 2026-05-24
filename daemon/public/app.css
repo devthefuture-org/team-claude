@@ -58,17 +58,10 @@ button {
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem; }
 
-/* Participant messages (newest first) */
-#feed-list li {
-  padding: 0.5rem 0.75rem; border-radius: 6px;
-  background: color-mix(in srgb, var(--fg) 5%, transparent);
-}
-#feed-list .meta { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.25rem; }
-#feed-list .body { white-space: pre-wrap; }
-
-/* Claude stream (chat-style chronological with scroll) */
+/* Unified stream: host prompts, participant drops, Claude replies and tool
+   invocations, all interleaved chronologically. */
 #stream-list {
-  max-height: 50vh;
+  max-height: 65vh;
   overflow-y: auto;
   padding: 0.25rem;
   display: flex; flex-direction: column; gap: 0.5rem;
@@ -80,12 +73,14 @@ ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: col
   max-width: 92%;
   word-wrap: break-word;
 }
-#stream-list li.user      { align-self: flex-end;  background: color-mix(in srgb, var(--accent) 22%, var(--bg-soft)); }
-#stream-list li.assistant { align-self: flex-start; background: color-mix(in srgb, var(--claude) 18%, var(--bg-soft)); }
-#stream-list li.tool      { align-self: flex-start; background: var(--bg-soft); font-family: ui-monospace, monospace; font-size: 0.85em; opacity: 0.8; border: 1px dashed var(--border); }
-#stream-list .meta { font-size: 0.72rem; color: var(--muted); margin-bottom: 0.2rem; }
-#stream-list .body { white-space: pre-wrap; }
-#stream-list .tool .tool-name { color: var(--claude); font-weight: 600; }
+#stream-list li.user        { align-self: flex-end;   background: color-mix(in srgb, var(--accent) 22%, var(--bg-soft)); }
+#stream-list li.participant { align-self: flex-end;   background: color-mix(in srgb, var(--ok) 18%, var(--bg-soft)); border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent); }
+#stream-list li.assistant   { align-self: flex-start; background: color-mix(in srgb, var(--claude) 18%, var(--bg-soft)); }
+#stream-list li.tool        { align-self: flex-start; background: color-mix(in srgb, var(--claude) 8%, var(--bg-soft)); font-family: ui-monospace, monospace; font-size: 0.9em; border-left: 3px solid var(--claude); }
+#stream-list .meta          { font-size: 0.72rem; color: var(--muted); margin-bottom: 0.2rem; }
+#stream-list .body          { white-space: pre-wrap; }
+#stream-list li.participant .meta strong { color: var(--ok); }
+#stream-list li.tool .meta  { color: var(--claude); font-weight: 600; }
 
 /* Claude Code-style thinking indicator */
 .thinking {
