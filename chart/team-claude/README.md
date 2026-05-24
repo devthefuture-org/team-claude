@@ -86,17 +86,23 @@ via `tmux -S /tmux-host/socket attach -t claude-main` to interact with Claude
 live.
 
 > **Heads-up on the official `anthropic.claude-code` extension in code-server.**
-> It is NOT pre-installed — it's broken in browser-based VS Code (codicon font
-> CSP rejection [#51677](https://github.com/anthropics/claude-code/issues/51677),
-> VS Code Chat APIs not fully supported in web extension host,
-> 2-4× slower [#15172](https://github.com/anthropics/claude-code/issues/15172)
-> closed as "not planned"). For the full Anthropic UI, **attach VS Code Desktop
-> to the pod** via the Kubernetes extension ("Attach Visual Studio Code"). In
-> the browser, use the `claude` CLI in tmux: open the integrated terminal and
-> run `tmux -S /tmux-host/socket attach -t claude-main` (or just
-> `claude-attach` if you're in the devcontainer container).
-> If you still want to try the extension in code-server, install it manually:
-> `kubectl exec -n team-claude session-<name>-0 -c code-server -- code-server --install-extension anthropic.claude-code`.
+> It's pre-installed (kept for its code-paste sign-in flow which works in
+> browser, unlike `claude` CLI's localhost OAuth). The image runs an
+> install-time CSS patch to fix the codicon-font issue
+> ([#51677](https://github.com/anthropics/claude-code/issues/51677): webview
+> CSP rejects the `data:` URI used in the @font-face). Caveats that remain:
+> - The chat panel itself uses VS Code Chat APIs that aren't fully implemented
+>   in the web extension host — it may render but operations beyond auth are
+>   flaky. Use it for sign-in, then drive Claude from the CLI in tmux.
+> - 2-4× slower than the CLI when it does work
+>   ([#15172](https://github.com/anthropics/claude-code/issues/15172), closed
+>   as "not planned").
+>
+> The robust path in the browser is `claude-attach` in the integrated terminal
+> — it joins the shared tmux session where Claude already runs, with daemon
+> streaming visible to participants. For the full Anthropic native UI, attach
+> VS Code Desktop to the pod via the Kubernetes extension ("Attach Visual
+> Studio Code").
 
 **Drive-by feedback (PMs, designers, external reviewers, junior devs)** —
 share the **participants URL with token**. They get a strip-down view:
