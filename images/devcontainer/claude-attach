@@ -1,7 +1,13 @@
 #!/bin/bash
 # Convenience wrapper: attach to the team-claude tmux session.
-# Resolves the socket via $TMUX_SOCKET env var, falling back to the default
-# location on the persistent volume.
+# Looks for the socket in the usual places — works from any container in the
+# pod (devcontainer @ /home/devbox/.tmux-claude/socket, code-server @
+# /tmux-host/socket via the PVC subPath mount).
 set -e
-SOCKET="${TMUX_SOCKET:-/home/devbox/.tmux-claude/socket}"
-exec tmux -S "$SOCKET" attach -t claude-main
+for cand in "${TMUX_SOCKET:-}" /home/devbox/.tmux-claude/socket /tmux-host/socket; do
+  if [ -n "$cand" ] && [ -S "$cand" ]; then
+    exec tmux -S "$cand" attach -t claude-main
+  fi
+done
+echo "claude-attach: no tmux-claude socket found (looked in TMUX_SOCKET, /home/devbox/.tmux-claude/socket, /tmux-host/socket)" >&2
+exit 1

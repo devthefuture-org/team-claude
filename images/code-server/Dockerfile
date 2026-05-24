@@ -25,7 +25,12 @@ ENV EXTENSIONS_GALLERY='{"serviceUrl": "https://marketplace.visualstudio.com/_ap
 # Auth-aware wrapper at /usr/local/bin/claude (overrides /usr/bin/claude) —
 # prevents the broken localhost-callback OAuth on remote pods.
 COPY images/devcontainer/claude /usr/local/bin/claude
-RUN chmod +x /usr/local/bin/claude
+# `claude-attach` joins the shared tmux session (where claude runs at pod
+# startup) so the daemon's stream watcher sees the conversation. Without this,
+# typing `claude` directly opens a separate session in /home/coder/.claude/
+# that the daemon doesn't see and participants don't watch.
+COPY images/devcontainer/claude-attach /usr/local/bin/claude-attach
+RUN chmod +x /usr/local/bin/claude /usr/local/bin/claude-attach
 
 # Pre-seed code-server with a dark theme so users don't get the auto-detect
 # light flash on first load. Machine-scope settings apply to every workspace.
