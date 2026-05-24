@@ -39,9 +39,14 @@ COPY --from=ext-build /ext/team-claude.vsix /opt/team-claude.vsix
 RUN su coder -s /bin/sh -c "EXTENSIONS_GALLERY='$EXTENSIONS_GALLERY' code-server --install-extension /opt/team-claude.vsix" \
     && chown -R 1000:1000 /home/coder/.local/share/code-server/extensions
 
-# Pin the official Anthropic extension to the version that matches our CLI
-# (avoids version-skew rendering / behaviour bugs).
-RUN su coder -s /bin/sh -c "EXTENSIONS_GALLERY='$EXTENSIONS_GALLERY' code-server --install-extension anthropic.claude-code@2.1.150 --force" \
+# Pin the official Anthropic extension by downloading the exact VSIX from
+# Marketplace (the `--install-extension id@version` syntax isn't supported by
+# this code-server release; only `id` (latest) or a path). Matches our CLI
+# version to avoid skew rendering / behaviour bugs.
+ARG ANTHROPIC_EXT_VERSION=2.1.150
+RUN curl -fsSL -o /opt/anthropic-claude-code.vsix \
+      "https://anthropic.gallery.vsassets.io/_apis/public/gallery/publisher/anthropic/extension/claude-code/${ANTHROPIC_EXT_VERSION}/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage" \
+    && su coder -s /bin/sh -c "code-server --install-extension /opt/anthropic-claude-code.vsix --force" \
     && chown -R 1000:1000 /home/coder/.local/share/code-server/extensions
 
 USER 1000:1000
