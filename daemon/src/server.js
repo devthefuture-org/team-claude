@@ -53,12 +53,12 @@ const state = {
 };
 
 // Rolling buffer of claude transcript events so newcomers see the
-// in-progress conversation when they connect.
-const claudeBuffer = [];
+// in-progress conversation when they connect. Map keyed by content hash so
+// the dedup check (against `tail -F` respawn / session rotation re-emits)
+// and the FIFO order live in a single structure — no drift between two
+// data structures kept in sync manually.
+const claudeBuffer = new Map(); // claudeKey → entry, insertion-ordered
 const CLAUDE_BUFFER_MAX = 200;
-// Dedup set keyed in sync with claudeBuffer — protects against
-// `tail -F` respawn / Claude session rotation re-emitting old entries.
-const seenClaudeKeys = new Set();
 // Mirror buffer of recent participant events so late-joiners can see the
 // drop history interleaved with the claude transcript by timestamp.
 const participantBuffer = [];
@@ -90,30 +90,57 @@ const participants = new Map(); // token → record
 function randomCode()  { return randomBytes(9).toString("base64url"); }   // 12 chars
 function randomToken() { return randomBytes(24).toString("base64url"); }  // 32 chars
 
-async function loadInvites() {
-  if (!existsSync(INVITES_FILE)) return;
+async function loadJsonMap(file, key, idField, map) {
+  let raw;
+  try { raw = await readFile(file, "utf8"); }
+  catch (e) { if (e.code === "ENOENT") return; throw e; }
   try {
-    const data = JSON.parse(await readFile(INVITES_FILE, "utf8"));
-    for (const inv of data.invites ?? []) invites.set(inv.code, inv);
-  } catch (e) { console.error("[team-claude-host] bad invites.json:", e.message); }
+    const data = JSON.parse(raw);
+    for (const r of data[key] ?? []) map.set(r[idField], r);
+  } catch (e) { console.error(`[team-claude-host] bad ${file}:`, e.message); }
 }
+
+async function loadInvites()      { return loadJsonMap(INVITES_FILE,      "invites",      "code",  invites); }
+async function loadParticipants() { return loadJsonMap(PARTICIPANTS_FILE, "participants", "token", participants); }
 
 async function persistInvites() {
   await writeAtomic(INVITES_FILE, JSON.stringify({ invites: [...invites.values()] }, null, 2));
-}
-
-async function loadParticipants() {
-  if (!existsSync(PARTICIPANTS_FILE)) return;
-  try {
-    const data = JSON.parse(await readFile(PARTICIPANTS_FILE, "utf8"));
-    for (const p of data.participants ?? []) participants.set(p.token, p);
-  } catch (e) { console.error("[team-claude-host] bad participants.json:", e.message); }
 }
 
 async function persistParticipants() {
   // Persist the full record (token included). The file is only readable
   // inside the pod (PVC, restricted security context).
   await writeAtomic(PARTICIPANTS_FILE, JSON.stringify({ participants: [...participants.values()] }, null, 2));
+}
+
+// lastSeenAt updates fire on every WS message. Coalesce them so we rewrite
+// participants.json at most once every ~2s instead of once per message.
+// Crash-loss of a few seconds of lastSeenAt is acceptable; immediate writes
+// (invite consume, revoke) still bypass this and call persistParticipants
+// directly.
+let lastSeenFlushTimer = null;
+const LAST_SEEN_FLUSH_MS = 2000;
+function scheduleLastSeenFlush() {
+  if (lastSeenFlushTimer) return;
+  lastSeenFlushTimer = setTimeout(() => {
+    lastSeenFlushTimer = null;
+    persistParticipants().catch(e =>
+      console.error("[team-claude-host] persistParticipants (lastSeen flush):", e.message));
+  }, LAST_SEEN_FLUSH_MS);
+}
+
+// Normalize and sanitize a participant pseudo so visually-identical strings
+// (NFC vs NFD, trailing whitespace, embedded zero-widths, control chars,
+// homoglyph-friendly junk) collapse to the same key — protects revoke and
+// uniqueness checks from impersonation via lookalike pseudos.
+const PSEUDO_DISALLOWED = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\ufeff]/g;
+function normalizePseudo(s) {
+  return String(s ?? "")
+    .normalize("NFC")
+    .replace(PSEUDO_DISALLOWED, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 32);
 }
 
 function findParticipantByToken(token) {
@@ -123,8 +150,10 @@ function findParticipantByToken(token) {
 }
 
 function findParticipantByPseudo(pseudo) {
+  const norm = normalizePseudo(pseudo);
+  if (!norm) return null;
   for (const p of participants.values()) {
-    if (p.pseudo === pseudo && !p.revokedAt) return p;
+    if (p.pseudo === norm && !p.revokedAt) return p;
   }
   return null;
 }
@@ -137,11 +166,42 @@ function authenticate(token) {
   return null;
 }
 
+// Consume an invite code race-safely (re-check inside the serialize() queue
+// so two concurrent submits can't both succeed). Returns one of:
+//   { record }                  on success
+//   { error: "consumed" }       if the code was already used
+//   { error: "pseudo_taken" }   if the pseudo was claimed between the
+//                               form load and submit
+async function consumeInvite(code, pseudo) {
+  return serialize(async () => {
+    const inv = invites.get(code);
+    if (!inv || inv.consumedAt) return { error: "consumed" };
+    if (findParticipantByPseudo(pseudo)) return { error: "pseudo_taken" };
+    const now = new Date().toISOString();
+    const record = {
+      token:      randomToken(),
+      speaker:    randomUUID(),
+      pseudo,
+      joinedAt:   now,
+      lastSeenAt: now,
+      revokedAt:  null,
+      fromInvite: code,
+    };
+    inv.consumedAt = now;
+    inv.consumedBy = pseudo;
+    participants.set(record.token, record);
+    await Promise.all([persistInvites(), persistParticipants()]);
+    return { record };
+  });
+}
+
 async function ensureStateDir() {
   await mkdir(STATE_DIR, { recursive: true });
-  if (existsSync(EVENTS_FILE)) await replayEvents();
-  await loadInvites();
-  await loadParticipants();
+  await Promise.all([
+    replayEvents(),
+    loadInvites(),
+    loadParticipants(),
+  ]);
   console.log(`[team-claude-host] loaded ${invites.size} invite(s), ${participants.size} participant(s)`);
 }
 
@@ -155,22 +215,26 @@ async function replayEvents() {
       console.error("[team-claude-host] bad event line:", e.message);
     }
   }
+  trimParticipantBuffer();
   console.log(`[team-claude-host] replayed up to seq=${state.lastSeq}, participants=${state.participants.size}`);
 }
 
 function applyEvent(ev) {
   state.lastSeq = Math.max(state.lastSeq, ev.seq ?? 0);
   if (ev.ts) state.lastMessageAt = ev.ts;
-  if (ev.body) {
-    participantBuffer.push(ev);
-    while (participantBuffer.length > PARTICIPANT_BUFFER_MAX) participantBuffer.shift();
-  }
+  if (ev.body) participantBuffer.push(ev);
   if (!ev.speaker) return;
   state.participants.set(ev.speaker, {
     id:         ev.speaker,
     name:       ev.name || ev.speaker,
     lastSeenAt: ev.ts || state.lastMessageAt,
   });
+}
+
+function trimParticipantBuffer() {
+  if (participantBuffer.length > PARTICIPANT_BUFFER_MAX) {
+    participantBuffer.splice(0, participantBuffer.length - PARTICIPANT_BUFFER_MAX);
+  }
 }
 
 async function writeAtomic(path, content) {
@@ -188,27 +252,34 @@ function formatTime(ts) {
   catch { return ts ?? ""; }
 }
 
+// Render a participant body inside a fenced code block, picking a fence
+// longer than the longest backtick run in the body so an attacker can't
+// inject markdown that breaks out of the quoted message.
+function fenceBody(body) {
+  let longest = 0;
+  const re = /`{3,}/g;
+  let m;
+  while ((m = re.exec(body)) !== null) longest = Math.max(longest, m[0].length);
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}\n${body}\n${fence}`;
+}
+
 async function regenerateLive() {
-  const recent = await tailEvents(30);
   const lines = [];
   lines.push("# Session collaborative", "");
   lines.push(`_Session : ${SESSION_NAME} — ${state.participants.size} participant(s), ${state.lastSeq} message(s)_`, "");
-  if (!recent.length) {
+  if (!participantBuffer.length) {
     lines.push("(aucun message pour l'instant)", "");
   } else {
-    for (const ev of recent) {
+    for (const ev of participantBuffer) {
       if (!ev.body) continue;
-      lines.push(`### ${ev.name || ev.speaker} — ${formatTime(ev.ts)}`, "", ev.body, "");
+      // Strip backticks from the heading line so a crafted name can't open
+      // its own fence; the body is fence-protected above.
+      const safeName = String(ev.name || ev.speaker).replace(/`/g, "'");
+      lines.push(`### ${safeName} — ${formatTime(ev.ts)}`, "", fenceBody(ev.body), "");
     }
   }
   await writeAtomic(LIVE_FILE, lines.join("\n"));
-}
-
-async function tailEvents(n) {
-  if (!existsSync(EVENTS_FILE)) return [];
-  const data = await readFile(EVENTS_FILE, "utf8");
-  const lines = data.split("\n").filter(Boolean);
-  return lines.slice(-n).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
 }
 
 async function regenerateState() {
@@ -291,7 +362,7 @@ async function handleIncoming(raw, auth) {
     speaker = auth.record.speaker;
     name    = auth.record.pseudo;
     auth.record.lastSeenAt = new Date().toISOString();
-    persistParticipants().catch(e => console.error("[team-claude-host] persistParticipants:", e.message));
+    scheduleLastSeenFlush();
   } else {
     if (!msg.speaker || typeof msg.speaker !== "string") return { error: "missing_speaker" };
     speaker = msg.speaker.slice(0, 64);
@@ -307,9 +378,11 @@ async function handleIncoming(raw, auth) {
   };
 
   applyEvent(ev);
+  trimParticipantBuffer();
   await persistEvent(ev);
-  await regenerateLive();
-  await regenerateState();
+  // live.md and state.json are independent atomic writes — issue them in
+  // parallel inside the serialized handler so we double-buffer fsyncs.
+  await Promise.all([regenerateLive(), regenerateState()]);
   return { ok: true, ev };
 }
 
@@ -339,20 +412,28 @@ function htmlEscape(s) {
   }[c]));
 }
 
-function renderInvitePage({ code, sessionName, error, pseudo }) {
+function renderShell({ title, header, body }) {
   return `<!doctype html>
 <html lang="fr" style="background:#111;color:#e5e5e5">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>team-claude — invitation ${htmlEscape(sessionName)}</title>
+<title>${htmlEscape(title)}</title>
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<header><h1>team-claude</h1><span class="muted">invitation · session ${htmlEscape(sessionName)}</span></header>
-<main>
-  <section>
+<header><h1>team-claude</h1><span class="muted">${header}</span></header>
+<main>${body}</main>
+</body>
+</html>`;
+}
+
+function renderInvitePage({ code, sessionName, error, pseudo }) {
+  return renderShell({
+    title:  `team-claude — invitation ${sessionName}`,
+    header: `invitation · session ${htmlEscape(sessionName)}`,
+    body: `<section>
     <h2>Choisis ton pseudo</h2>
     <p class="muted" style="margin-top:0">Une fois rejoint·e, ton pseudo est fixe pour cette session. Choisis bien.</p>
     ${error ? `<p style="color:var(--err)">${htmlEscape(error)}</p>` : ""}
@@ -364,29 +445,19 @@ function renderInvitePage({ code, sessionName, error, pseudo }) {
         <button type="submit">Rejoindre</button>
       </div>
     </form>
-  </section>
-</main>
-</body>
-</html>`;
+  </section>`,
+  });
 }
 
 function renderErrorPage({ sessionName, title, message }) {
-  return `<!doctype html>
-<html lang="fr" style="background:#111;color:#e5e5e5">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="dark">
-<title>team-claude — ${htmlEscape(title)}</title>
-<link rel="stylesheet" href="/app.css">
-</head>
-<body>
-<header><h1>team-claude</h1><span class="muted">session ${htmlEscape(sessionName)}</span></header>
-<main><section>
+  return renderShell({
+    title:  `team-claude — ${title}`,
+    header: `session ${htmlEscape(sessionName)}`,
+    body: `<section>
   <h2 style="color:var(--err)">${htmlEscape(title)}</h2>
   <p>${htmlEscape(message)}</p>
-</section></main>
-</body>
-</html>`;
+</section>`,
+  });
 }
 
 function requireAdmin(req, res) {
@@ -427,7 +498,18 @@ const RESERVED_LOCAL_PORTS = new Set([
   22,
 ]);
 
+// Defense-in-depth headers applied to every response. The room token rides
+// in the URL query — `Referrer-Policy: no-referrer` keeps it out of
+// outbound Referer headers should the page ever load an external resource.
+// Other headers are cheap belt-and-braces.
+function setSecurityHeaders(res) {
+  res.setHeader("Referrer-Policy",        "no-referrer");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options",        "SAMEORIGIN");
+}
+
 const server = createServer(async (req, res) => {
+  setSecurityHeaders(res);
   if (req.url.startsWith(HEALTH_PATH)) {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: "ok", session: SESSION_NAME, lastSeq: state.lastSeq }));
@@ -450,6 +532,15 @@ const server = createServer(async (req, res) => {
       // Strip the hint from the upstream URL so the CLI server doesn't see it.
       url.searchParams.delete("_port");
       req.url = url.pathname + (url.search ? "?" + url.searchParams.toString() : "");
+      // Enforce the same reserved-port allowlist as the auto-discover path
+      // so `?_port=` can't be used to reach code-server (8080), sshd (22 /
+      // 2222) or the daemon itself (PORT). Without this, /callback is an
+      // unauthenticated SSRF/port-scanner of the pod's loopback.
+      if (RESERVED_LOCAL_PORTS.has(port) || port < 1024 || port > 65535) {
+        res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end(`oauth-proxy: port ${port} is reserved or out of the ephemeral range.\n`);
+        return;
+      }
     } else {
       port = await findOAuthCallbackPort({ reservedPorts: RESERVED_LOCAL_PORTS });
     }
@@ -492,51 +583,24 @@ const server = createServer(async (req, res) => {
     if (req.method === "POST") {
       let body;
       try { body = await readBody(req); } catch { res.writeHead(413).end("body too large"); return; }
-      const params = new URLSearchParams(body);
-      const pseudo = (params.get("pseudo") ?? "").trim().slice(0, 32);
+      const pseudo = normalizePseudo(new URLSearchParams(body).get("pseudo"));
       if (!pseudo) {
         res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
         res.end(renderInvitePage({ code, sessionName: SESSION_NAME, error: "Pseudo requis.", pseudo }));
         return;
       }
-      if (findParticipantByPseudo(pseudo)) {
-        res.writeHead(409, { "Content-Type": "text/html; charset=utf-8" });
-        res.end(renderInvitePage({ code, sessionName: SESSION_NAME, error: `Le pseudo « ${pseudo} » est déjà pris. Choisis-en un autre.`, pseudo }));
-        return;
-      }
-      // Race-safe consume: re-check inside the serialize() queue so two
-      // concurrent submits on the same code can't both succeed.
-      const consumed = await serialize(async () => {
-        const inv = invites.get(code);
-        if (!inv || inv.consumedAt) return null;
-        if (findParticipantByPseudo(pseudo)) return { error: "pseudo_taken" };
-        const record = {
-          token:      randomToken(),
-          speaker:    randomUUID(),
-          pseudo,
-          joinedAt:   new Date().toISOString(),
-          lastSeenAt: new Date().toISOString(),
-          revokedAt:  null,
-          fromInvite: code,
-        };
-        inv.consumedAt = record.joinedAt;
-        inv.consumedBy = pseudo;
-        participants.set(record.token, record);
-        await persistInvites();
-        await persistParticipants();
-        return { record };
-      });
-      if (!consumed) {
+      const result = await consumeInvite(code, pseudo);
+      if (result.error === "consumed") {
         res.writeHead(410, { "Content-Type": "text/html; charset=utf-8" });
         res.end(renderErrorPage({ sessionName: SESSION_NAME, title: "Invitation déjà utilisée", message: "Ce code vient d'être consommé." }));
         return;
       }
-      if (consumed.error === "pseudo_taken") {
+      if (result.error === "pseudo_taken") {
         res.writeHead(409, { "Content-Type": "text/html; charset=utf-8" });
-        res.end(renderInvitePage({ code, sessionName: SESSION_NAME, error: `Le pseudo « ${pseudo} » vient d'être pris. Choisis-en un autre.`, pseudo }));
+        res.end(renderInvitePage({ code, sessionName: SESSION_NAME, error: `Le pseudo « ${pseudo} » est déjà pris. Choisis-en un autre.`, pseudo }));
         return;
       }
-      const location = `/?token=${encodeURIComponent(consumed.record.token)}`;
+      const location = `/?token=${encodeURIComponent(result.record.token)}`;
       res.writeHead(302, { "Location": location, "Content-Type": "text/plain" });
       res.end(`Redirecting to ${location}`);
       return;
@@ -594,7 +658,7 @@ const server = createServer(async (req, res) => {
       let body;
       try { body = await readBody(req); } catch { res.writeHead(413).end("body too large"); return; }
       const params = new URLSearchParams(body);
-      const pseudo = (params.get("pseudo") ?? "").trim();
+      const pseudo = normalizePseudo(params.get("pseudo"));
       const target = findParticipantByPseudo(pseudo);
       if (!target) {
         res.writeHead(404, { "Content-Type": "application/json" });
@@ -622,9 +686,26 @@ const server = createServer(async (req, res) => {
 
 const wss = new WebSocketServer({ noServer: true });
 
+// WS Origin allowlist: when set, reject upgrades whose `Origin` header is
+// neither empty (non-browser clients like our verify scripts have no Origin)
+// nor in this list. Same-Origin Policy doesn't cover WebSocket — any page in
+// the user's browser could otherwise piggy-back on a leaked token. Configure
+// via WS_ALLOWED_ORIGINS=comma,separated list. Default = empty (off) keeps
+// our CLI/test tooling working out of the box; the chart sets it explicitly.
+const WS_ALLOWED_ORIGINS = new Set(
+  (process.env.WS_ALLOWED_ORIGINS ?? "").split(",").map(s => s.trim()).filter(Boolean)
+);
+
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url, "http://x");
   if (url.pathname !== WS_PATH) { socket.destroy(); return; }
+  if (WS_ALLOWED_ORIGINS.size > 0) {
+    const origin = req.headers.origin;
+    if (origin && !WS_ALLOWED_ORIGINS.has(origin)) {
+      console.warn(`[team-claude-host] WS upgrade rejected: origin=${origin}`);
+      socket.destroy(); return;
+    }
+  }
   const auth = authenticate(url.searchParams.get("token"));
   if (!auth) { socket.destroy(); return; }
   wss.handleUpgrade(req, socket, head, (ws) => {
@@ -639,7 +720,7 @@ wss.on("connection", (ws) => {
   ws.send(JSON.stringify({
     kind:               "hello",
     state:              snapshotForClient(),
-    claudeBacklog:      claudeBuffer,
+    claudeBacklog:      [...claudeBuffer.values()],
     participantBacklog: participantBuffer,
     claudeStatus,
     participantInfo:    ws._auth.kind === "participant"
@@ -674,12 +755,10 @@ function claudeKey(entry) {
 
 function pushClaude(entry) {
   const k = claudeKey(entry);
-  if (seenClaudeKeys.has(k)) return;
-  seenClaudeKeys.add(k);
-  claudeBuffer.push(entry);
-  while (claudeBuffer.length > CLAUDE_BUFFER_MAX) {
-    const removed = claudeBuffer.shift();
-    seenClaudeKeys.delete(claudeKey(removed));
+  if (claudeBuffer.has(k)) return;
+  claudeBuffer.set(k, entry);
+  if (claudeBuffer.size > CLAUDE_BUFFER_MAX) {
+    claudeBuffer.delete(claudeBuffer.keys().next().value);
   }
   broadcast({ kind: "claude-event", entry });
 }

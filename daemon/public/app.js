@@ -1,3 +1,5 @@
+import { escapeHtml, formatTime } from "/util.js";
+
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const TOKEN = params.get("token");
@@ -49,17 +51,6 @@ function setOnline(online) {
   els.status.classList.toggle("status-online", online);
   els.status.classList.toggle("status-offline", !online);
   els.sendBtn.disabled = !online;
-}
-
-function escapeHtml(s) {
-  return String(s ?? "").replace(/[&<>"']/g, c => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[c]));
-}
-
-function formatTime(ts) {
-  try { return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
-  catch { return ""; }
 }
 
 // ---------------------------------------------------------- Thinking spinner

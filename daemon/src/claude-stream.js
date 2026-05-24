@@ -92,7 +92,6 @@ export function startClaudeStream({ workspaceDir, claudeConfigDir, onEvent, onSt
 
   let currentFile = null;
   let child = null;
-  let lastEntryRole = null;
   let thinking = false;
 
   const setThinking = (on) => {
@@ -119,10 +118,7 @@ export function startClaudeStream({ workspaceDir, claudeConfigDir, onEvent, onSt
         const transformed = transformEntry(raw);
         if (!transformed) continue;
         const items = Array.isArray(transformed) ? transformed : [transformed];
-        for (const entry of items) {
-          onEvent(entry);
-          lastEntryRole = entry.role;
-        }
+        for (const entry of items) onEvent(entry);
         // user → thinking on; assistant text → thinking off
         if (items.some(e => e.role === "user"))                            setThinking(true);
         if (items.some(e => e.role === "assistant" && e.text))             setThinking(false);

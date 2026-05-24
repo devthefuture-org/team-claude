@@ -1,3 +1,5 @@
+import { escapeHtml, formatDateTime as fmtTime } from "/util.js";
+
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const TOKEN = params.get("token");
@@ -25,18 +27,6 @@ function setOnline(ok) {
   els.status.textContent = ok ? "online" : "offline";
   els.status.classList.toggle("status-online", ok);
   els.status.classList.toggle("status-offline", !ok);
-}
-
-function escapeHtml(s) {
-  return String(s ?? "").replace(/[&<>"']/g, c => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[c]));
-}
-
-function fmtTime(ts) {
-  if (!ts) return "—";
-  try { return new Date(ts).toLocaleString([], { dateStyle: "short", timeStyle: "short" }); }
-  catch { return ts; }
 }
 
 function toast(msg, kind = "ok") {
