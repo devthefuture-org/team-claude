@@ -30,6 +30,9 @@ Commands:
                           Install a new session via Helm
   list                    List all team-claude releases in the namespace
   attach <name>           kubectl exec into the tmux/claude session
+  auth <name> [path]      Copy ~/.claude/.credentials.json from this machine
+                          into the pod (workaround for remote OAuth bugs).
+                          Default path: \$HOME/.claude/.credentials.json
   url <name>              Print code-server URL + password
   room <name>             Print participants room URL (requires --daemon)
   logs <name> [-c CT]     Tail logs of a container (default: devcontainer)
@@ -88,6 +91,21 @@ cmd_attach() {
   exec kubectl exec -it -n "$NS" "session-$name-0" -c devcontainer -- claude-attach
 }
 
+cmd_auth() {
+  local name="${1:-}"; [ -n "$name" ] || die "auth requires <name>"
+  local src="${2:-$HOME/.claude/.credentials.json}"
+  [ -f "$src" ] || die "no credentials at $src — run 'claude login' on this machine first, then retry"
+  echo "Copying $src → session-$name pod (/home/devbox/.claude/.credentials.json)…"
+  kubectl exec -n "$NS" "session-$name-0" -c devcontainer -- \
+    bash -c 'install -d -m 0700 /home/devbox/.claude'
+  # kubectl cp expects <namespace>/<pod>:<path>
+  kubectl cp "$src" "$NS/session-$name-0:/home/devbox/.claude/.credentials.json" -c devcontainer
+  kubectl exec -n "$NS" "session-$name-0" -c devcontainer -- \
+    chmod 0600 /home/devbox/.claude/.credentials.json
+  echo "✓ done. The auth token is on the PVC and survives pod restarts."
+  echo "  Run 'tcl attach $name' to start a Claude session."
+}
+
 cmd_url() {
   local name="${1:-}"; [ -n "$name" ] || die "url requires <name>"
   local pwd_b64; pwd_b64=$(kubectl get secret -n "$NS" "session-$name-auth" -o jsonpath='{.data.codeServerPassword}')
@@ -137,6 +155,7 @@ case "$cmd" in
   create)  cmd_create  "$@";;
   list)    cmd_list    "$@";;
   attach)  cmd_attach  "$@";;
+  auth)    cmd_auth    "$@";;
   url)     cmd_url     "$@";;
   room)    cmd_room    "$@";;
   logs)    cmd_logs    "$@";;

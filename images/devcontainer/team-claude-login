@@ -14,21 +14,24 @@ if [ ! -f "$CREDS" ] && ! [ -n "${ANTHROPIC_API_KEY:-}" ]; then
 ═════════════════════════════════════════════════════════════════════════
   First-time login required.
 
-  This pod runs remotely, so the standard `claude` OAuth (with localhost
-  callback) cannot reach your browser. Use the manual code-paste flow:
+  This pod runs remotely. Three working paths, easiest first:
 
+  (1) Copy creds from your laptop (RECOMMENDED — bypasses all OAuth bugs):
+      On your laptop:    $ claude login          # native OAuth, works
+      Then from there:   $ tcl auth <session>    # copies ~/.claude/.credentials.json into the pod
+      Back in this tmux: just type `claude` — it'll pick up the token.
+
+  (2) `claude setup-token` (manual code-paste flow, but currently has a
+      known scope bug — anthropics/claude-code#4540, may show "Paramètre
+      scope manquant" in the browser; option 1 is more reliable today):
       $ claude setup-token
 
-  - It prints a URL — open it in any browser.
-  - Authenticate with your Claude subscription (Pro/Max).
-  - Paste the resulting code back into the terminal.
-  - The long-lived token is saved to ~/.claude/ on the PVC, so it
-    survives pod restarts and is shared with every shell attaching to
-    this tmux session.
-
-  Or, if you have an API key:
+  (3) API key:
       $ export ANTHROPIC_API_KEY=sk-ant-...
       $ claude
+
+  Do NOT run plain `claude` first — it'd try the OAuth-with-localhost
+  callback that can't reach your browser from this pod.
 
 ═════════════════════════════════════════════════════════════════════════
 
