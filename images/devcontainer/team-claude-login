@@ -19,9 +19,9 @@ if [ ! -f "$CREDS" ] && ! [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   (1) Just run `claude` — when the browser fails to reach
       http://localhost:<port>/callback?code=…, hand-edit the URL to:
       https://team-<session>.<domain>/callback?code=…
-      The team-claude daemon's OAuth proxy auto-discovers the localhost
-      port and relays the callback to the claude CLI. If the heuristic
-      picks the wrong port, append &_port=<port> to the URL.
+      ⚠ note: it MUST be the `team-` host, NOT `code-` (the daemon's
+      OAuth proxy lives only on team-). If the auto-discovered port is
+      wrong, append &_port=<port> to the URL.
 
   (2) Copy creds from your laptop (bypasses OAuth entirely):
       On your laptop:    $ claude login          # native OAuth, works

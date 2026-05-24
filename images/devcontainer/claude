@@ -24,7 +24,11 @@ for arg in "$@"; do
   esac
 done
 
-if $needs_auth_check && [ ! -f "$CREDS" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+if $needs_auth_check \
+   && [ ! -f "$CREDS" ] \
+   && [ -z "${ANTHROPIC_API_KEY:-}" ] \
+   && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] \
+   && [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
   cat >&2 <<'EOF'
 ─────────────────────────────────────────────────────────────────────────
   Auth required.
