@@ -39,14 +39,22 @@ COPY --from=ext-build /ext/team-claude.vsix /opt/team-claude.vsix
 RUN su coder -s /bin/sh -c "EXTENSIONS_GALLERY='$EXTENSIONS_GALLERY' code-server --install-extension /opt/team-claude.vsix" \
     && chown -R 1000:1000 /home/coder/.local/share/code-server/extensions
 
-# Pin the official Anthropic extension by downloading the exact VSIX from
-# Marketplace (the `--install-extension id@version` syntax isn't supported by
-# this code-server release; only `id` (latest) or a path). Matches our CLI
-# version to avoid skew rendering / behaviour bugs.
-ARG ANTHROPIC_EXT_VERSION=2.1.150
-RUN curl -fsSL -o /opt/anthropic-claude-code.vsix \
-      "https://anthropic.gallery.vsassets.io/_apis/public/gallery/publisher/anthropic/extension/claude-code/${ANTHROPIC_EXT_VERSION}/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage" \
-    && su coder -s /bin/sh -c "code-server --install-extension /opt/anthropic-claude-code.vsix --force" \
-    && chown -R 1000:1000 /home/coder/.local/share/code-server/extensions
+# NOTE: anthropic.claude-code extension is intentionally NOT pre-installed.
+# It targets VS Code Desktop and is broken in browser-based VS Code
+# (code-server / openvscode-server / vscode.dev):
+#   - codicon font @font-face uses data: URI but webview CSP forbids it
+#     → icons render as empty squares (anthropics/claude-code#51677, since 2.1.39)
+#   - VS Code Chat APIs (chatSessionStore, chatEditingSession, type 'local')
+#     are not fully implemented in the web extension host → chat panel
+#     fails to initialise.
+#   - 2x-4x slower than the CLI even when it does load (anthropics/claude-code#15172,
+#     closed as "not planned").
+# Users who want the full Anthropic UI should attach VS Code Desktop to the
+# pod (Kubernetes extension → "Attach Visual Studio Code"). In the browser,
+# the recommended path is the claude CLI in tmux (`claude-attach`).
+#
+# To install it anyway on a running session:
+#   kubectl exec -n team-claude session-<name>-0 -c code-server -- \
+#     code-server --install-extension anthropic.claude-code
 
 USER 1000:1000
