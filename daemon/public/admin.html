@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="fr" style="background:#111;color:#e5e5e5">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>team-claude — admin</title>
+  <link rel="stylesheet" href="/app.css">
+  <style>
+    html,body{background:#111;color:#e5e5e5}
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 0.72rem; letter-spacing: 0.05em; }
+    tbody tr:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+    .pill { font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px; }
+    .pill.active   { background: color-mix(in srgb, var(--ok)   20%, transparent); color: var(--ok); }
+    .pill.revoked  { background: color-mix(in srgb, var(--err)  20%, transparent); color: var(--err); }
+    .pill.pending  { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+    .pill.consumed { background: color-mix(in srgb, var(--muted) 20%, transparent); color: var(--muted); }
+    button.danger    { background: var(--err); }
+    button.secondary { background: transparent; border: 1px solid var(--border); color: var(--fg); }
+    .url-cell { font-family: ui-monospace, monospace; font-size: 0.8rem; word-break: break-all; max-width: 28rem; }
+    .toast { position: fixed; bottom: 1rem; right: 1rem; padding: 0.75rem 1rem; border-radius: 6px; background: var(--bg-soft); border: 1px solid var(--border); z-index: 100; }
+    .toast.ok  { border-color: var(--ok);  color: var(--ok); }
+    .toast.err { border-color: var(--err); color: var(--err); }
+    .actions-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>team-claude · admin</h1>
+    <span id="session-name" class="muted">…</span>
+    <a id="participant-stream-link" class="muted" style="margin-left:1rem">→ stream live</a>
+    <span id="status" class="status status-offline">checking…</span>
+  </header>
+
+  <main>
+    <section>
+      <h2>Invitations</h2>
+      <div class="actions-row" style="margin-bottom: 1rem">
+        <button id="mint-btn" type="button">+ Générer un nouveau code</button>
+        <button id="reload-btn" type="button" class="secondary">↻ Recharger</button>
+        <span class="muted" id="auto-refresh-hint">auto-refresh: 5s</span>
+      </div>
+      <table id="invites-table">
+        <thead>
+          <tr><th>Code</th><th>Créé</th><th>URL à partager</th><th>État</th></tr>
+        </thead>
+        <tbody id="invites-body"><tr><td colspan="4" class="muted">(chargement…)</td></tr></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Participants</h2>
+      <table id="participants-table">
+        <thead>
+          <tr><th>Pseudo</th><th>Joined</th><th>Last seen</th><th>État</th><th>Action</th></tr>
+        </thead>
+        <tbody id="participants-body"><tr><td colspan="5" class="muted">(chargement…)</td></tr></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="/admin.js" type="module"></script>
+</body>
+</html>

@@ -35,6 +35,8 @@ Commands:
                           Default path: \$HOME/.claude/.credentials.json
   url <name>              Print code-server URL + password
   room <name>             Print the admin/host URL (room token, free-form name)
+  admin <name>            Print the admin web UI URL (manage invites + revoke
+                          participants from a browser)
   invite <name>           Mint a one-shot invite URL — participant picks a
                           pseudo on first open and gets their own token
   participants <name>     List participants (pseudo, joined/seen, revoked)
@@ -156,6 +158,14 @@ _session_base_url() {
   echo "https://team-$name.$DOMAIN"
 }
 
+cmd_admin() {
+  local name="${1:-}"; [ -n "$name" ] || die "admin requires <name>"
+  local tok base
+  tok=$(_session_token "$name"); base=$(_session_base_url "$name")
+  [ -n "$tok" ] || die "no room token found for session-$name"
+  printf "%s/admin?token=%s\n" "$base" "$tok"
+}
+
 cmd_invite() {
   local name="${1:-}"; [ -n "$name" ] || die "invite requires <name>"
   local tok base
@@ -238,6 +248,7 @@ case "$cmd" in
   auth)         cmd_auth         "$@";;
   url)          cmd_url          "$@";;
   room)         cmd_room         "$@";;
+  admin)        cmd_admin        "$@";;
   invite)       cmd_invite       "$@";;
   participants) cmd_participants "$@";;
   revoke)       cmd_revoke       "$@";;

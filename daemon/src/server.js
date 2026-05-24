@@ -545,6 +545,23 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // ── Admin UI (single-page app served at /admin, gated by the room token
+  //    inside the page's JS). The token-in-URL pattern matches /room and
+  //    /invite — same security model.
+  {
+    const pathname = new URL(req.url, "http://x").pathname;
+    if (pathname === "/admin") {
+      try {
+        const data = await readFile(join(PUBLIC_DIR, "admin.html"));
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(data);
+      } catch {
+        res.writeHead(404).end("admin.html missing");
+      }
+      return;
+    }
+  }
+
   // ── Admin endpoints (gated by ROOM_TOKEN query param) ────────────────
   if (req.url.startsWith("/admin/")) {
     if (!requireAdmin(req, res)) return;
