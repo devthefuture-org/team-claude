@@ -180,10 +180,11 @@ d = json.load(sys.stdin)["participants"]
 if not d:
     print("(aucun participant)")
     sys.exit(0)
-print(f"{\"PSEUDO\":<24} {\"JOINED\":<20} {\"LAST SEEN\":<20} STATE")
+fmt = "%-24s %-20s %-20s %s"
+print(fmt % ("PSEUDO", "JOINED", "LAST SEEN", "STATE"))
 for p in sorted(d, key=lambda x: x["joinedAt"]):
     state = "revoked@" + p["revokedAt"] if p.get("revokedAt") else "active"
-    print(f"{p[\"pseudo\"]:<24} {p[\"joinedAt\"][:19]:<20} {p[\"lastSeenAt\"][:19]:<20} {state}")
+    print(fmt % (p["pseudo"], p["joinedAt"][:19], p["lastSeenAt"][:19], state))
 '
 }
 
