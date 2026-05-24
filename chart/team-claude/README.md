@@ -69,13 +69,35 @@ helm install session-demo ./chart/team-claude \
 
 ## Access patterns
 
-| Mode | Cmd / URL | Notes |
-|---|---|---|
-| Editor in browser | `https://code-<session>.<domain>/` | code-server, password = `tcl url <session>` |
-| Editor in VS Code Desktop | "Attach Visual Studio Code" via Kubernetes extension on `session-<name>-0` | direct to the devcontainer container, full DX |
-| Terminal / claude CLI | `kubectl exec -it … -c devcontainer -- claude-attach` (or `tcl attach <name>`) | attaches the persistent tmux session |
-| SSH (Phase 2 optional) | `tcl create <name> --ssh` + provide `--set ssh.authorizedKeys[0]=…` | port 22 via Service (default ClusterIP — port-forward to reach) |
-| Participants web app | `https://team-<session>.<domain>/?token=<…>` | URL printed by `tcl room <name>` |
+| Mode | Cmd / URL | Trust level | Notes |
+|---|---|---|---|
+| Editor in browser | `https://code-<session>.<domain>/` | **High** (full IDE + terminal) | code-server, password = `tcl url <session>` |
+| Editor in VS Code Desktop | "Attach Visual Studio Code" on `session-<name>-0` via the Kubernetes extension | **High** | direct to the devcontainer container, full DX |
+| Terminal / claude CLI | `kubectl exec -it … -c devcontainer -- claude-attach` (or `tcl attach <name>`) | **High** | attaches the persistent tmux session |
+| SSH (optional) | `tcl create <name> --ssh` + `--set ssh.authorizedKeys[0]=…` | **High** | port 22 via Service (default ClusterIP — port-forward to reach) |
+| Participants web app | `https://team-<session>.<domain>/?token=<…>` | **Low** (read-only stream + drop) | URL printed by `tcl room <name>` |
+
+### Two collaboration modes — choose by trust level
+
+**Mob coding (everyone is a trusted dev)** — share the **code-server URL +
+password**. Each pair-programmer logs in, sees the same workspace, can edit,
+can open a terminal in any container. They all attach to the same tmux session
+via `tmux -S /tmux-host/socket attach -t claude-main` to interact with Claude
+live.
+
+**Drive-by feedback (PMs, designers, external reviewers, junior devs)** —
+share the **participants URL with token**. They get a strip-down view:
+
+- A live read-only stream of Claude's current conversation (`Claude` panel,
+  with a Claude-Code-style "thinking" indicator while it's working).
+- A box to drop short messages, prefixed with their name.
+- No terminal, no file access, no commits, no secrets.
+
+Claude itself watches `.team-claude/events.jsonl` via its Monitor tool, so
+drops are integrated into the conversation in real-time — no need for a host
+to nudge "go re-read live.md". The CLAUDE.md file written by the daemon at
+session start instructs Claude to cite the participant by name in its replies,
+so contributions stay attributed in the visible stream.
 
 ## Lifecycle
 

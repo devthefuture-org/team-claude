@@ -16,17 +16,26 @@
   </header>
 
   <main>
+    <section id="claude-stream">
+      <h2>Claude</h2>
+      <ul id="stream-list" class="muted">(en attente…)</ul>
+      <div id="thinking" class="thinking hidden" aria-live="polite">
+        <span class="spinner" aria-hidden="true"></span>
+        <span class="thinking-verb">Réfléchit</span><span class="thinking-dots">…</span>
+      </div>
+    </section>
+
     <section id="compose">
       <h2>Drop un message</h2>
       <div class="row">
         <label>Nom <input id="name" placeholder="Alice" autocomplete="name"></label>
         <button id="send-btn" type="button" disabled>Envoyer</button>
       </div>
-      <textarea id="body" rows="4" placeholder="Écris ton message ici… (Ctrl/Cmd+Entrée pour envoyer)"></textarea>
+      <textarea id="body" rows="3" placeholder="Écris ton message ici… (Ctrl/Cmd+Entrée pour envoyer)"></textarea>
     </section>
 
     <section id="feed">
-      <h2>Messages récents</h2>
+      <h2>Messages participants</h2>
       <ul id="feed-list" class="muted">(aucun)</ul>
     </section>
   </main>

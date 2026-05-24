@@ -4,16 +4,24 @@ import { existsSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
+import { startClaudeStream } from "./claude-stream.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = resolve(__dirname, "..", "public");
 
-const PORT          = Number(process.env.PORT          ?? 7000);
-const WS_PATH       = process.env.WS_PATH       ?? "/ws";
-const HEALTH_PATH   = process.env.HEALTH_PATH   ?? "/healthz";
-const WORKSPACE_DIR = process.env.WORKSPACE_DIR ?? "/workspace";
-const SESSION_NAME  = process.env.SESSION_NAME  ?? "default";
-const ROOM_TOKEN    = process.env.ROOM_TOKEN    ?? "";
+const PORT               = Number(process.env.PORT ?? 7000);
+const WS_PATH            = process.env.WS_PATH            ?? "/ws";
+const HEALTH_PATH        = process.env.HEALTH_PATH        ?? "/healthz";
+const WORKSPACE_DIR      = process.env.WORKSPACE_DIR      ?? "/workspace";
+const SESSION_NAME       = process.env.SESSION_NAME       ?? "default";
+const ROOM_TOKEN         = process.env.ROOM_TOKEN         ?? "";
+// The chart mounts the .claude subPath of the PVC here (read-only) so the
+// daemon can tail Claude Code's session transcripts without seeing the rest
+// of the devbox home directory.
+const CLAUDE_CONFIG_DIR  = process.env.CLAUDE_CONFIG_DIR  ?? "/claude-data";
+// Path Claude was invoked from in the devcontainer — used to compute the
+// project dir key (slashes → dashes), e.g. /home/devbox/workspace → -home-devbox-workspace.
+const CLAUDE_WORKSPACE   = process.env.CLAUDE_WORKSPACE   ?? "/home/devbox/workspace";
 
 const STATE_DIR    = join(WORKSPACE_DIR, ".team-claude");
 const EVENTS_FILE  = join(STATE_DIR, "events.jsonl");
@@ -39,6 +47,12 @@ const state = {
   lastSeq: 0,
   lastMessageAt: null,
 };
+
+// Rolling buffer of claude transcript events so newcomers see the
+// in-progress conversation when they connect.
+const claudeBuffer = [];
+const CLAUDE_BUFFER_MAX = 200;
+let claudeStatus = { state: "idle", since: null };
 
 const wsClients = new Set();
 
@@ -141,6 +155,10 @@ les messages arriver tout seul.
 - **Drop naturel** : les messages sont des contributions libres, pas des instructions
   formelles. Distingue qui parle (\`name\`) mais ne traite pas chaque message comme
   une demande de validation.
+- **Cite explicitement le nom du participant** quand tu intègres son message
+  ("Alice suggère X", "Bob conteste avec Y") — c'est important pour que les
+  autres participants suivent qui a dit quoi dans la conversation visible côté
+  team-claude.
 - **Intègre puis avance** : par défaut, prends en compte le nouveau message et continue
   l'action en cours.
 - **Pause si contradiction** : si un nouveau message contredit une décision en cours
@@ -247,7 +265,12 @@ server.on("upgrade", (req, socket, head) => {
 wss.on("connection", (ws) => {
   wsClients.add(ws);
   ws.on("close", () => wsClients.delete(ws));
-  ws.send(JSON.stringify({ kind: "hello", state: snapshotForClient() }));
+  ws.send(JSON.stringify({
+    kind:           "hello",
+    state:          snapshotForClient(),
+    claudeBacklog:  claudeBuffer,
+    claudeStatus,
+  }));
 
   ws.on("message", async (raw) => {
     const result = await handleIncoming(raw.toString());
@@ -268,14 +291,35 @@ function snapshotForClient() {
   };
 }
 
+function pushClaude(entry) {
+  claudeBuffer.push(entry);
+  while (claudeBuffer.length > CLAUDE_BUFFER_MAX) claudeBuffer.shift();
+  broadcast({ kind: "claude-event", entry });
+}
+
+function setClaudeStatus(status) {
+  claudeStatus = status;
+  broadcast({ kind: "claude-status", status });
+}
+
 await ensureStateDir();
 await ensureClaudeMd();
+
+const stopClaudeStream = startClaudeStream({
+  workspaceDir:    CLAUDE_WORKSPACE,
+  claudeConfigDir: CLAUDE_CONFIG_DIR,
+  onEvent:  pushClaude,
+  onStatus: setClaudeStatus,
+  log:      (m) => console.log(`[team-claude-host/stream] ${m}`),
+});
+
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[team-claude-host] session=${SESSION_NAME} listening on :${PORT} ws=${WS_PATH}`);
 });
 
 const shutdown = (sig) => () => {
   console.log(`[team-claude-host] ${sig} received, shutting down`);
+  stopClaudeStream();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000).unref();
 };

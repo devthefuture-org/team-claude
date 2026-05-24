@@ -188,6 +188,12 @@ spec:
               value: {{ include "team-claude.sessionName" . | quote }}
             - name: WORKSPACE_DIR
               value: /workspace
+            # Tells the daemon where Claude was invoked from (path used to
+            # derive the project key under ~/.claude/projects/<slashes-to-dashes>).
+            - name: CLAUDE_WORKSPACE
+              value: /home/devbox/workspace
+            - name: CLAUDE_CONFIG_DIR
+              value: /claude-data
             - name: ROOM_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -201,6 +207,13 @@ spec:
             - name: data
               mountPath: /workspace
               subPath: workspace
+            # Read-only view of ~/.claude so the daemon can tail Claude Code's
+            # transcripts (~/.claude/projects/<key>/<uuid>.jsonl) without seeing
+            # the rest of the devbox home directory.
+            - name: data
+              mountPath: /claude-data
+              subPath: .claude
+              readOnly: true
           resources:
             {{- toYaml .Values.daemon.resources | nindent 12 }}
           readinessProbe:
