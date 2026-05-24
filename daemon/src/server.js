@@ -53,9 +53,22 @@ const state = {
 // in-progress conversation when they connect.
 const claudeBuffer = [];
 const CLAUDE_BUFFER_MAX = 200;
+// Dedup set keyed in sync with claudeBuffer — protects against
+// `tail -F` respawn / Claude session rotation re-emitting old entries.
+const seenClaudeKeys = new Set();
 let claudeStatus = { state: "idle", since: null };
 
 const wsClients = new Set();
+
+// Single-writer queue for participant ingestion so that seq allocation,
+// disk persistence, regeneration and broadcast happen in strict order
+// even when multiple clients send messages concurrently.
+let writeChain = Promise.resolve();
+function serialize(task) {
+  const next = writeChain.then(task, task);
+  writeChain = next.catch(() => {});
+  return next;
+}
 
 async function ensureStateDir() {
   await mkdir(STATE_DIR, { recursive: true });
@@ -309,13 +322,15 @@ wss.on("connection", (ws) => {
     claudeStatus,
   }));
 
-  ws.on("message", async (raw) => {
-    const result = await handleIncoming(raw.toString());
-    if (result.error) {
-      ws.send(JSON.stringify({ kind: "error", message: result.error }));
-      return;
-    }
-    broadcast({ kind: "event", ev: result.ev, snapshot: snapshotForClient() });
+  ws.on("message", (raw) => {
+    serialize(async () => {
+      const result = await handleIncoming(raw.toString());
+      if (result.error) {
+        if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ kind: "error", message: result.error }));
+        return;
+      }
+      broadcast({ kind: "event", ev: result.ev, snapshot: snapshotForClient() });
+    });
   });
 });
 
@@ -328,9 +343,19 @@ function snapshotForClient() {
   };
 }
 
+function claudeKey(entry) {
+  return `${entry.ts ?? ""}|${entry.role ?? ""}|${entry.text ?? ""}|${entry.tool ?? ""}|${entry.summary ?? ""}`;
+}
+
 function pushClaude(entry) {
+  const k = claudeKey(entry);
+  if (seenClaudeKeys.has(k)) return;
+  seenClaudeKeys.add(k);
   claudeBuffer.push(entry);
-  while (claudeBuffer.length > CLAUDE_BUFFER_MAX) claudeBuffer.shift();
+  while (claudeBuffer.length > CLAUDE_BUFFER_MAX) {
+    const removed = claudeBuffer.shift();
+    seenClaudeKeys.delete(claudeKey(removed));
+  }
   broadcast({ kind: "claude-event", entry });
 }
 
