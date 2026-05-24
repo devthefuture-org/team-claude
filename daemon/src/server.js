@@ -1,12 +1,13 @@
 import { createServer } from "node:http";
-import { readFile, writeFile, appendFile, mkdir, rename } from "node:fs/promises";
+import { readFile, appendFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, createHmac, timingSafeEqual } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { startClaudeStream } from "./claude-stream.js";
 import { findOAuthCallbackPort, proxyToLocalhost } from "./oauth-proxy.js";
+import { writeAtomic, htmlEscape, readBody, sendJson, sendHtml, loadJsonMap } from "./util.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = resolve(__dirname, "..", "public");
@@ -90,18 +91,68 @@ const participants = new Map(); // token → record
 function randomCode()  { return randomBytes(9).toString("base64url"); }   // 12 chars
 function randomToken() { return randomBytes(24).toString("base64url"); }  // 32 chars
 
-async function loadJsonMap(file, key, idField, map) {
-  let raw;
-  try { raw = await readFile(file, "utf8"); }
-  catch (e) { if (e.code === "ENOENT") return; throw e; }
-  try {
-    const data = JSON.parse(raw);
-    for (const r of data[key] ?? []) map.set(r[idField], r);
-  } catch (e) { console.error(`[team-claude-host] bad ${file}:`, e.message); }
+// We never store raw participant bearer tokens on disk — a shell inside the
+// pod (mob coder, leaked code-server password, host CLI snoop) could read
+// participants.json otherwise and impersonate every participant. Instead we
+// store HMAC-SHA256(token, ROOM_TOKEN) and authenticate by hashing the
+// submitted token and looking it up. The raw token only lives in the
+// participant's browser URL.
+function hashToken(token) {
+  if (!ROOM_TOKEN) throw new Error("ROOM_TOKEN not configured — cannot hash");
+  return createHmac("sha256", ROOM_TOKEN).update(String(token)).digest("hex");
+}
+// Constant-time check on the Map.get result so a comparison side-channel
+// doesn't help an attacker enumerate valid hashes.
+function findParticipantByRawToken(rawToken) {
+  if (!rawToken || !ROOM_TOKEN) return null;
+  const h = hashToken(rawToken);
+  const p = participants.get(h);
+  if (!p) return null;
+  // Cheap defense-in-depth: confirm the key matches via timingSafeEqual.
+  const a = Buffer.from(h, "hex"), b = Buffer.from(p.tokenHash, "hex");
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  return p.revokedAt ? null : p;
 }
 
-async function loadInvites()      { return loadJsonMap(INVITES_FILE,      "invites",      "code",  invites); }
-async function loadParticipants() { return loadJsonMap(PARTICIPANTS_FILE, "participants", "token", participants); }
+// Strip tokenHash before returning a participant over HTTP / WS.
+function safeParticipantView(p) {
+  return {
+    speaker:    p.speaker,
+    pseudo:     p.pseudo,
+    joinedAt:   p.joinedAt,
+    lastSeenAt: p.lastSeenAt,
+    revokedAt:  p.revokedAt,
+    fromInvite: p.fromInvite,
+  };
+}
+
+async function loadInvites() { return loadJsonMap(INVITES_FILE, "invites", "code", invites); }
+
+async function loadParticipants() {
+  // We changed the on-disk schema from `.token` (raw) to `.tokenHash`.
+  // Hand-roll the load so legacy files can be migrated in place rather
+  // than dropped (and we still go through the same ENOENT-tolerant path).
+  let raw;
+  try { raw = await readFile(PARTICIPANTS_FILE, "utf8"); }
+  catch (e) { if (e.code === "ENOENT") return; throw e; }
+  let data;
+  try { data = JSON.parse(raw); }
+  catch (e) { console.error(`[team-claude-host] bad ${PARTICIPANTS_FILE}:`, e.message); return; }
+  let migrated = 0;
+  for (const r of data.participants ?? []) {
+    if (!r.tokenHash && r.token) {
+      r.tokenHash = hashToken(r.token);
+      delete r.token;
+      migrated++;
+    }
+    if (!r.tokenHash) continue;
+    participants.set(r.tokenHash, r);
+  }
+  if (migrated > 0) {
+    console.log(`[team-claude-host] migrated ${migrated} participant token(s) to HMAC hashes`);
+    await persistParticipants();
+  }
+}
 
 async function persistInvites() {
   await writeAtomic(INVITES_FILE, JSON.stringify({ invites: [...invites.values()] }, null, 2));
@@ -143,12 +194,6 @@ function normalizePseudo(s) {
     .slice(0, 32);
 }
 
-function findParticipantByToken(token) {
-  if (!token) return null;
-  const p = participants.get(token);
-  return p && !p.revokedAt ? p : null;
-}
-
 function findParticipantByPseudo(pseudo) {
   const norm = normalizePseudo(pseudo);
   if (!norm) return null;
@@ -161,7 +206,7 @@ function findParticipantByPseudo(pseudo) {
 function authenticate(token) {
   if (!token) return null;
   if (ROOM_TOKEN && token === ROOM_TOKEN) return { kind: "host" };
-  const p = findParticipantByToken(token);
+  const p = findParticipantByRawToken(token);
   if (p) return { kind: "participant", record: p };
   return null;
 }
@@ -178,8 +223,9 @@ async function consumeInvite(code, pseudo) {
     if (!inv || inv.consumedAt) return { error: "consumed" };
     if (findParticipantByPseudo(pseudo)) return { error: "pseudo_taken" };
     const now = new Date().toISOString();
+    const rawToken = randomToken();
     const record = {
-      token:      randomToken(),
+      tokenHash:  hashToken(rawToken),
       speaker:    randomUUID(),
       pseudo,
       joinedAt:   now,
@@ -189,9 +235,11 @@ async function consumeInvite(code, pseudo) {
     };
     inv.consumedAt = now;
     inv.consumedBy = pseudo;
-    participants.set(record.token, record);
+    participants.set(record.tokenHash, record);
     await Promise.all([persistInvites(), persistParticipants()]);
-    return { record };
+    // rawToken is returned but never stored on disk — the participant
+    // browser is the only place it ever exists after this point.
+    return { record, rawToken };
   });
 }
 
@@ -235,12 +283,6 @@ function trimParticipantBuffer() {
   if (participantBuffer.length > PARTICIPANT_BUFFER_MAX) {
     participantBuffer.splice(0, participantBuffer.length - PARTICIPANT_BUFFER_MAX);
   }
-}
-
-async function writeAtomic(path, content) {
-  const tmp = `${path}.tmp.${process.pid}.${Date.now()}`;
-  await writeFile(tmp, content);
-  await rename(tmp, path);
 }
 
 async function persistEvent(ev) {
@@ -393,25 +435,6 @@ function broadcast(payload) {
   }
 }
 
-function readBody(req, maxBytes = 4096) {
-  return new Promise((resolve, reject) => {
-    let data = "", n = 0;
-    req.on("data", (c) => {
-      n += c.length;
-      if (n > maxBytes) { req.destroy(); reject(new Error("body too large")); return; }
-      data += c;
-    });
-    req.on("end", () => resolve(data));
-    req.on("error", reject);
-  });
-}
-
-function htmlEscape(s) {
-  return String(s ?? "").replace(/[&<>"']/g, c => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[c]));
-}
-
 function renderShell({ title, header, body }) {
   return `<!doctype html>
 <html lang="fr" style="background:#111;color:#e5e5e5">
@@ -464,8 +487,7 @@ function requireAdmin(req, res) {
   const url = new URL(req.url, "http://x");
   const tok = url.searchParams.get("token");
   if (!ROOM_TOKEN || tok !== ROOM_TOKEN) {
-    res.writeHead(401, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "unauthorized" }));
+    sendJson(res, 401, { error: "unauthorized" });
     return false;
   }
   return true;
@@ -508,16 +530,44 @@ function setSecurityHeaders(res) {
   res.setHeader("X-Frame-Options",        "SAMEORIGIN");
 }
 
+// ─── Per-IP rate limits ──────────────────────────────────────────────────
+// Sliding-window counters protect the cheap-but-amplifying endpoints:
+// invite minting + consumption, revoke, and WS upgrade. The Map is bounded
+// by a periodic sweep so an attacker can't grow it unboundedly by varying
+// the source IP.
+const rateLimitState = new Map(); // "scope|ip" → { count, windowStart }
+const RATE_LIMIT_WINDOW_MS = 60_000;
+function clientIp(req) {
+  const fwd = req.headers?.["x-forwarded-for"];
+  if (fwd) return String(fwd).split(",")[0].trim();
+  return req.socket?.remoteAddress || "unknown";
+}
+function rateLimit(scope, ip, max) {
+  const key = `${scope}|${ip}`;
+  const now = Date.now();
+  const entry = rateLimitState.get(key);
+  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+    rateLimitState.set(key, { count: 1, windowStart: now });
+    return true;
+  }
+  entry.count++;
+  return entry.count <= max;
+}
+setInterval(() => {
+  const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS;
+  for (const [k, v] of rateLimitState) {
+    if (v.windowStart < cutoff) rateLimitState.delete(k);
+  }
+}, 5 * 60_000).unref();
+
 const server = createServer(async (req, res) => {
   setSecurityHeaders(res);
   if (req.url.startsWith(HEALTH_PATH)) {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", session: SESSION_NAME, lastSeq: state.lastSeq }));
+    sendJson(res, 200, { status: "ok", session: SESSION_NAME, lastSeq: state.lastSeq });
     return;
   }
   if (req.url === "/session.json") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ session: SESSION_NAME, wsPath: WS_PATH }));
+    sendJson(res, 200, { session: SESSION_NAME, wsPath: WS_PATH });
     return;
   }
   // OAuth callback proxy: claude (and similar) opens a localhost callback
@@ -566,41 +616,39 @@ const server = createServer(async (req, res) => {
     const code = url.pathname.slice("/invite/".length);
     const invite = invites.get(code);
     if (!invite) {
-      res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(renderErrorPage({ sessionName: SESSION_NAME, title: "Invitation inconnue", message: "Ce code d'invitation n'existe pas (ou plus). Demande au host de t'en envoyer un nouveau." }));
+      sendHtml(res, 404, renderErrorPage({ sessionName: SESSION_NAME, title: "Invitation inconnue", message: "Ce code d'invitation n'existe pas (ou plus). Demande au host de t'en envoyer un nouveau." }));
       return;
     }
     if (invite.consumedAt) {
-      res.writeHead(410, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(renderErrorPage({ sessionName: SESSION_NAME, title: "Invitation déjà utilisée", message: `Ce code a déjà été consommé par ${invite.consumedBy} le ${invite.consumedAt}. Demande au host un nouveau code.` }));
+      sendHtml(res, 410, renderErrorPage({ sessionName: SESSION_NAME, title: "Invitation déjà utilisée", message: `Ce code a déjà été consommé par ${invite.consumedBy} le ${invite.consumedAt}. Demande au host un nouveau code.` }));
       return;
     }
     if (req.method === "GET") {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(renderInvitePage({ code, sessionName: SESSION_NAME }));
+      sendHtml(res, 200, renderInvitePage({ code, sessionName: SESSION_NAME }));
       return;
     }
     if (req.method === "POST") {
+      if (!rateLimit("invite_post", clientIp(req), 10)) {
+        sendHtml(res, 429, renderErrorPage({ sessionName: SESSION_NAME, title: "Trop d'essais", message: "Trop de tentatives. Réessaye dans une minute." }));
+        return;
+      }
       let body;
       try { body = await readBody(req); } catch { res.writeHead(413).end("body too large"); return; }
       const pseudo = normalizePseudo(new URLSearchParams(body).get("pseudo"));
       if (!pseudo) {
-        res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-        res.end(renderInvitePage({ code, sessionName: SESSION_NAME, error: "Pseudo requis.", pseudo }));
+        sendHtml(res, 400, renderInvitePage({ code, sessionName: SESSION_NAME, error: "Pseudo requis.", pseudo }));
         return;
       }
       const result = await consumeInvite(code, pseudo);
       if (result.error === "consumed") {
-        res.writeHead(410, { "Content-Type": "text/html; charset=utf-8" });
-        res.end(renderErrorPage({ sessionName: SESSION_NAME, title: "Invitation déjà utilisée", message: "Ce code vient d'être consommé." }));
+        sendHtml(res, 410, renderErrorPage({ sessionName: SESSION_NAME, title: "Invitation déjà utilisée", message: "Ce code vient d'être consommé." }));
         return;
       }
       if (result.error === "pseudo_taken") {
-        res.writeHead(409, { "Content-Type": "text/html; charset=utf-8" });
-        res.end(renderInvitePage({ code, sessionName: SESSION_NAME, error: `Le pseudo « ${pseudo} » est déjà pris. Choisis-en un autre.`, pseudo }));
+        sendHtml(res, 409, renderInvitePage({ code, sessionName: SESSION_NAME, error: `Le pseudo « ${pseudo} » est déjà pris. Choisis-en un autre.`, pseudo }));
         return;
       }
-      const location = `/?token=${encodeURIComponent(result.record.token)}`;
+      const location = `/?token=${encodeURIComponent(result.rawToken)}`;
       res.writeHead(302, { "Location": location, "Content-Type": "text/plain" });
       res.end(`Redirecting to ${location}`);
       return;
@@ -617,8 +665,7 @@ const server = createServer(async (req, res) => {
     if (pathname === "/admin") {
       try {
         const data = await readFile(join(PUBLIC_DIR, "admin.html"));
-        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-        res.end(data);
+        sendHtml(res, 200, data);
       } catch {
         res.writeHead(404).end("admin.html missing");
       }
@@ -630,39 +677,36 @@ const server = createServer(async (req, res) => {
   if (req.url.startsWith("/admin/")) {
     if (!requireAdmin(req, res)) return;
     const url = new URL(req.url, "http://x");
+    // Throttle the mutating endpoints. The host's web admin auto-polls
+    // GETs every 5s — those are bounded by the cache-poll cadence and
+    // don't need a counter.
+    const isMutation = req.method === "POST";
+    if (isMutation && !rateLimit("admin_post", clientIp(req), 30)) {
+      sendJson(res, 429, { error: "rate_limited" });
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/admin/invite") {
       const inv = { code: randomCode(), createdAt: new Date().toISOString(), consumedAt: null, consumedBy: null };
       invites.set(inv.code, inv);
       await persistInvites();
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ code: inv.code, createdAt: inv.createdAt }));
+      sendJson(res, 200, { code: inv.code, createdAt: inv.createdAt });
       return;
     }
     if (req.method === "GET" && url.pathname === "/admin/invites") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ invites: [...invites.values()] }));
+      sendJson(res, 200, { invites: [...invites.values()] });
       return;
     }
     if (req.method === "GET" && url.pathname === "/admin/participants") {
-      // Strip tokens before returning — the host already has the room token,
-      // they don't need to know each participant's bearer.
-      const safe = [...participants.values()].map(p => ({
-        speaker: p.speaker, pseudo: p.pseudo, joinedAt: p.joinedAt,
-        lastSeenAt: p.lastSeenAt, revokedAt: p.revokedAt, fromInvite: p.fromInvite,
-      }));
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ participants: safe }));
+      sendJson(res, 200, { participants: [...participants.values()].map(safeParticipantView) });
       return;
     }
     if (req.method === "POST" && url.pathname === "/admin/revoke") {
       let body;
       try { body = await readBody(req); } catch { res.writeHead(413).end("body too large"); return; }
-      const params = new URLSearchParams(body);
-      const pseudo = normalizePseudo(params.get("pseudo"));
+      const pseudo = normalizePseudo(new URLSearchParams(body).get("pseudo"));
       const target = findParticipantByPseudo(pseudo);
       if (!target) {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "no_active_participant_with_that_pseudo", pseudo }));
+        sendJson(res, 404, { error: "no_active_participant_with_that_pseudo", pseudo });
         return;
       }
       target.revokedAt = new Date().toISOString();
@@ -673,8 +717,7 @@ const server = createServer(async (req, res) => {
           try { ws.close(4001, "revoked"); } catch {}
         }
       }
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true, pseudo, revokedAt: target.revokedAt }));
+      sendJson(res, 200, { ok: true, pseudo, revokedAt: target.revokedAt });
       return;
     }
     res.writeHead(404).end("not found");
@@ -699,6 +742,9 @@ const WS_ALLOWED_ORIGINS = new Set(
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url, "http://x");
   if (url.pathname !== WS_PATH) { socket.destroy(); return; }
+  if (!rateLimit("ws_upgrade", clientIp(req), 30)) {
+    socket.destroy(); return;
+  }
   if (WS_ALLOWED_ORIGINS.size > 0) {
     const origin = req.headers.origin;
     if (origin && !WS_ALLOWED_ORIGINS.has(origin)) {
