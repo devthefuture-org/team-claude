@@ -1,0 +1,50 @@
+#!/bin/bash
+# /usr/local/bin/claude — auth-aware wrapper that prevents the broken OAuth
+# flow on remote pods.
+#
+# The stock `claude` CLI opens an OAuth tab that redirects to
+# http://localhost:<random-port>/callback — that callback cannot reach the
+# user's browser when claude runs inside a remote container. We force the
+# manual code-paste flow (`claude setup-token`) on first run instead.
+#
+# Once ~/.claude/.credentials.json exists (or ANTHROPIC_API_KEY is set), this
+# wrapper is transparent and just exec's the real binary.
+set -euo pipefail
+
+REAL=/usr/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe
+CREDS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json"
+
+# Always pass through if a non-interactive subcommand is requested — these
+# don't trigger OAuth (setup-token, --help, --version, -p/--print, etc.).
+needs_auth_check=true
+for arg in "$@"; do
+  case "$arg" in
+    setup-token|--help|-h|--version|-v|-p|--print)
+      needs_auth_check=false; break;;
+  esac
+done
+
+if $needs_auth_check && [ ! -f "$CREDS" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  cat >&2 <<'EOF'
+─────────────────────────────────────────────────────────────────────────
+  Auth required.
+
+  This pod is remote, so the stock `claude` OAuth callback
+  (http://localhost:<random>/callback) cannot reach your browser.
+
+  Switching you to `claude setup-token` (manual code-paste flow):
+  - It will print a URL — open it in any browser, anywhere.
+  - Authenticate with your Claude subscription (Pro/Max).
+  - Paste the resulting code back in this terminal.
+  - The long-lived token is saved in ~/.claude/ on the PVC and shared
+    with every shell attaching to this tmux session.
+
+  Note: `/login` from inside an interactive claude session ALSO triggers
+  the broken OAuth — run `claude setup-token` from a fresh shell instead.
+─────────────────────────────────────────────────────────────────────────
+
+EOF
+  exec "$REAL" setup-token
+fi
+
+exec "$REAL" "$@"

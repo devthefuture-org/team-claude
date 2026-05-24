@@ -109,10 +109,12 @@ COPY tmux.conf /etc/team-claude/tmux.conf
 COPY team-claude-init  /usr/local/bin/team-claude-init
 COPY team-claude-login /usr/local/bin/team-claude-login
 COPY claude-attach     /usr/local/bin/claude-attach
+COPY claude            /usr/local/bin/claude
 RUN chmod 0644 /etc/team-claude/tmux.conf \
     && chmod +x /usr/local/bin/team-claude-init \
                /usr/local/bin/team-claude-login \
-               /usr/local/bin/claude-attach
+               /usr/local/bin/claude-attach \
+               /usr/local/bin/claude
 
 # Rootless image — required by clusters that enforce PSA `restricted` /
 # runAsNonRoot=true. K8s needs a NUMERIC uid here (it can't resolve names

@@ -18,11 +18,14 @@ RUN apt-get update \
     && npm install -g @anthropic-ai/claude-code@2.1.150 \
     && npm cache clean --force
 
-# Use Microsoft VS Code Marketplace as the extension gallery so we always
-# get the latest official build of every extension (Open VSX lags behind
-# for some Anthropic-published items). This is a runtime gallery selection;
-# `code-server --install-extension` resolves against it.
+# Use Microsoft VS Code Marketplace so we get the latest official build of
+# every extension (Open VSX often lags). Resolved at install time below.
 ENV EXTENSIONS_GALLERY='{"serviceUrl": "https://marketplace.visualstudio.com/_apis/public/gallery", "cacheUrl": "https://vscode.blob.core.windows.net/gallery/index", "itemUrl": "https://marketplace.visualstudio.com/items"}'
+
+# Auth-aware wrapper at /usr/local/bin/claude (overrides /usr/bin/claude) —
+# prevents the broken localhost-callback OAuth on remote pods.
+COPY images/devcontainer/claude /usr/local/bin/claude
+RUN chmod +x /usr/local/bin/claude
 
 # Pre-seed code-server with a dark theme so users don't get the auto-detect
 # light flash on first load. Machine-scope settings apply to every workspace.
@@ -36,10 +39,9 @@ COPY --from=ext-build /ext/team-claude.vsix /opt/team-claude.vsix
 RUN su coder -s /bin/sh -c "EXTENSIONS_GALLERY='$EXTENSIONS_GALLERY' code-server --install-extension /opt/team-claude.vsix" \
     && chown -R 1000:1000 /home/coder/.local/share/code-server/extensions
 
-# Pre-install the official Anthropic Claude Code extension from MS Marketplace.
-# Done at image build time so the user gets it instantly; postStart hook in the
-# chart can layer additional extensions per session.
-RUN su coder -s /bin/sh -c "EXTENSIONS_GALLERY='$EXTENSIONS_GALLERY' code-server --install-extension anthropic.claude-code --force" \
+# Pin the official Anthropic extension to the version that matches our CLI
+# (avoids version-skew rendering / behaviour bugs).
+RUN su coder -s /bin/sh -c "EXTENSIONS_GALLERY='$EXTENSIONS_GALLERY' code-server --install-extension anthropic.claude-code@2.1.150 --force" \
     && chown -R 1000:1000 /home/coder/.local/share/code-server/extensions
 
 USER 1000:1000
