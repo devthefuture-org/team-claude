@@ -724,6 +724,51 @@ const server = createServer(async (req, res) => {
       sendJson(res, 200, { invites: [...invites.values()] });
       return;
     }
+    // POST /admin/invite/<code> body: action=edit|regenerate|delete
+    // Consumed invites stay as an audit trail — edit/regen/delete refuse.
+    if (req.method === "POST" && url.pathname.startsWith("/admin/invite/")) {
+      const code = url.pathname.slice("/admin/invite/".length);
+      if (!code || code.includes("/")) { sendJson(res, 400, { error: "bad_code" }); return; }
+      const invite = invites.get(code);
+      if (!invite) { sendJson(res, 404, { error: "unknown_code" }); return; }
+      let body;
+      try { body = await readBody(req); } catch { res.writeHead(413).end("body too large"); return; }
+      const params = new URLSearchParams(body);
+      const action = params.get("action");
+      if (invite.consumedAt && action !== "view") {
+        sendJson(res, 409, { error: "already_consumed", action });
+        return;
+      }
+      if (action === "edit") {
+        invite.intendedFor = normalizePseudo(params.get("intendedFor")) || null;
+        await persistInvites();
+        sendJson(res, 200, { ok: true, code, intendedFor: invite.intendedFor });
+        return;
+      }
+      if (action === "delete") {
+        invites.delete(code);
+        await persistInvites();
+        sendJson(res, 200, { ok: true, code });
+        return;
+      }
+      if (action === "regenerate") {
+        const intendedFor = invite.intendedFor;
+        invites.delete(code);
+        const newInv = {
+          code:        randomCode(),
+          createdAt:   new Date().toISOString(),
+          intendedFor,
+          consumedAt:  null,
+          consumedBy:  null,
+        };
+        invites.set(newInv.code, newInv);
+        await persistInvites();
+        sendJson(res, 200, { ok: true, code: newInv.code, oldCode: code, intendedFor });
+        return;
+      }
+      sendJson(res, 400, { error: "unknown_action", action });
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/admin/participants") {
       sendJson(res, 200, { participants: [...participants.values()].map(safeParticipantView) });
       return;

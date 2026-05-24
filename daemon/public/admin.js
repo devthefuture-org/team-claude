@@ -73,7 +73,7 @@ function rebuildIndex(invites) {
 
 function renderInvites(invites) {
   if (!invites.length) {
-    els.invitesBody.innerHTML = `<tr><td colspan="5" class="muted">(aucun code généré)</td></tr>`;
+    els.invitesBody.innerHTML = `<tr><td colspan="6" class="muted">(aucun code généré)</td></tr>`;
     return;
   }
   invites.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
@@ -83,6 +83,10 @@ function renderInvites(invites) {
     const intendedCell = inv.intendedFor
       ? `<strong>${escapeHtml(inv.intendedFor)}</strong>`
       : `<span class="muted">—</span>`;
+    const actionsCell = consumed ? `<span class="muted">—</span>` : `
+      <button class="secondary" data-edit="${escapeHtml(inv.code)}" data-current="${escapeHtml(inv.intendedFor ?? "")}" title="Éditer le nom prévu" type="button">✎</button>
+      <button class="secondary" data-regen="${escapeHtml(inv.code)}" title="Régénérer le code (l'ancienne URL devient invalide)" type="button">↻</button>
+      <button class="danger"    data-del="${escapeHtml(inv.code)}"   title="Supprimer ce code en attente" type="button">✕</button>`;
     return `<tr>
       <td><code>${escapeHtml(inv.code)}</code></td>
       <td>${intendedCell}</td>
@@ -93,11 +97,50 @@ function renderInvites(invites) {
            <button class="secondary" data-copy="${escapeHtml(url)}" type="button" style="margin-left:0.5rem">copier</button>`}
       </td>
       <td><span class="pill ${consumed ? "consumed" : "pending"}">${consumed ? "consommé" : "en attente"}</span></td>
+      <td><div class="actions-row" style="gap:0.25rem">${actionsCell}</div></td>
     </tr>`;
   }).join("");
   els.invitesBody.querySelectorAll("button[data-copy]").forEach(btn => {
     btn.addEventListener("click", () => copy(btn.dataset.copy));
   });
+  els.invitesBody.querySelectorAll("button[data-edit]").forEach(btn => {
+    btn.addEventListener("click", () => editInvite(btn.dataset.edit, btn.dataset.current));
+  });
+  els.invitesBody.querySelectorAll("button[data-regen]").forEach(btn => {
+    btn.addEventListener("click", () => regenerateInvite(btn.dataset.regen));
+  });
+  els.invitesBody.querySelectorAll("button[data-del]").forEach(btn => {
+    btn.addEventListener("click", () => deleteInvite(btn.dataset.del));
+  });
+}
+
+async function editInvite(code, current) {
+  const next = prompt("Nouveau nom pour ce code (vide = enlever):", current ?? "");
+  if (next === null) return;  // user cancelled
+  try {
+    const r = await api("POST", `/admin/invite/${encodeURIComponent(code)}`, { action: "edit", intendedFor: next });
+    toast(`Code ${code} → ${r.intendedFor ? `pour ${r.intendedFor}` : "sans nom prévu"}`);
+    await refresh();
+  } catch (e) { toast(`Erreur: ${e.message}`, "err"); }
+}
+
+async function regenerateInvite(code) {
+  if (!confirm(`Régénérer ce code ?\n\nL'URL d'invitation actuelle (${code}) sera invalidée immédiatement et un nouveau code sera mint avec le même nom prévu. L'URL copiée précédemment ne fonctionnera plus.`)) return;
+  try {
+    const r = await api("POST", `/admin/invite/${encodeURIComponent(code)}`, { action: "regenerate" });
+    await copy(inviteUrl(r.code));
+    toast(`Code régénéré : ${r.code} (URL copiée)`);
+    await refresh();
+  } catch (e) { toast(`Erreur: ${e.message}`, "err"); }
+}
+
+async function deleteInvite(code) {
+  if (!confirm(`Supprimer ce code d'invitation en attente ?\n\nLe lien envoyé ne fonctionnera plus.`)) return;
+  try {
+    await api("POST", `/admin/invite/${encodeURIComponent(code)}`, { action: "delete" });
+    toast(`Code ${code} supprimé`);
+    await refresh();
+  } catch (e) { toast(`Erreur: ${e.message}`, "err"); }
 }
 
 function renderParticipants(participants) {
