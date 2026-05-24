@@ -18,9 +18,31 @@ let ws = null;
 let mySpeaker = localStorage.getItem("team-claude.speaker") || crypto.randomUUID();
 localStorage.setItem("team-claude.speaker", mySpeaker);
 
+// Identity: if the daemon issued us a participant token (via invite flow),
+// hello.participantInfo carries the locked pseudo. Otherwise (host token) the
+// name field stays free-form and is persisted in localStorage.
+let lockedPseudo = null;
+
 const savedName = localStorage.getItem("team-claude.name") || "";
 els.name.value = savedName;
-els.name.addEventListener("input", () => localStorage.setItem("team-claude.name", els.name.value));
+els.name.addEventListener("input", () => {
+  if (!lockedPseudo) localStorage.setItem("team-claude.name", els.name.value);
+});
+
+function applyParticipantInfo(info) {
+  if (info && info.pseudo) {
+    lockedPseudo = info.pseudo;
+    els.name.value = info.pseudo;
+    els.name.readOnly = true;
+    els.name.title = "Pseudo défini à l'acceptation de l'invitation — non modifiable.";
+    const lbl = els.name.closest("label");
+    if (lbl) lbl.firstChild.textContent = "Pseudo (verrouillé) ";
+  } else {
+    lockedPseudo = null;
+    els.name.readOnly = false;
+    els.name.title = "";
+  }
+}
 
 function setOnline(online) {
   els.status.textContent = online ? "online" : "offline";
@@ -158,6 +180,7 @@ function connect() {
     switch (msg.kind) {
       case "hello":
         renderSnapshot(msg.state);
+        applyParticipantInfo(msg.participantInfo);
         applyBacklog(msg.claudeBacklog, msg.participantBacklog);
         showThinking(msg.claudeStatus?.state === "thinking");
         break;
@@ -181,9 +204,19 @@ function connect() {
 function sendMessage() {
   const body = els.body.value.trim();
   if (!body) { els.body.focus(); return; }
-  const name = els.name.value.trim();
-  if (!name)  { els.name.focus(); return; }
-  ws?.send(JSON.stringify({ speaker: mySpeaker, name, body }));
+  // For participant-token connections the daemon ignores speaker/name and
+  // uses the server-side record (locked at invite acceptance). For host-token
+  // connections (no participantInfo in hello) we still send the local UUID
+  // and the user-typed name.
+  const payload = lockedPseudo
+    ? { body }
+    : (() => {
+        const name = els.name.value.trim();
+        if (!name) { els.name.focus(); return null; }
+        return { speaker: mySpeaker, name, body };
+      })();
+  if (!payload) return;
+  ws?.send(JSON.stringify(payload));
   els.body.value = "";
   els.body.focus();
 }
