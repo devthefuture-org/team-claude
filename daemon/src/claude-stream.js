@@ -124,15 +124,20 @@ export function startClaudeStream({ workspaceDir, claudeConfigDir, onEvent, onSt
       }
     });
     child.stderr.on("data", (c) => log?.(`tail stderr: ${c.toString().trim()}`));
-    child.on("exit", (code) => log?.(`tail exited (${code}); will respawn on next poll`));
+    child.on("exit", (code) => {
+      log?.(`tail exited (${code}); will respawn on next poll`);
+      child = null;
+    });
   };
 
   const poll = () => {
     const latest = findLatestJsonl(projectDir);
     if (latest && latest !== currentFile) {
       tailFile(latest);
-    } else if (!currentFile && !latest) {
-      // Project dir doesn't exist yet — claude hasn't started. Try again.
+    } else if (latest && !child) {
+      // Same file but the tail subprocess died — respawn. seenClaudeKeys in
+      // the server dedups the re-emission of `tail -n +1`.
+      tailFile(latest);
     }
   };
 
