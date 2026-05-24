@@ -24,6 +24,18 @@ for arg in "$@"; do
   esac
 done
 
+# If a full credentials.json (from `claude login` / `tcl auth`) is on disk AND
+# a CLAUDE_CODE_OAUTH_TOKEN is also set in the env, the env var would silently
+# win. setup-token-generated tokens only carry `user:inference`, which makes
+# the interactive UI reject and fall back to the login screen. Prefer the
+# richer file in that case (warn so the user knows).
+if [ -f "$CREDS" ] && [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  echo "[claude wrapper] $CREDS is present AND CLAUDE_CODE_OAUTH_TOKEN is set." >&2
+  echo "[claude wrapper] Unsetting the env var for this invocation so the file's full scopes win." >&2
+  echo "[claude wrapper] Run 'unset CLAUDE_CODE_OAUTH_TOKEN' in your shell to persist." >&2
+  unset CLAUDE_CODE_OAUTH_TOKEN
+fi
+
 if $needs_auth_check \
    && [ ! -f "$CREDS" ] \
    && [ -z "${ANTHROPIC_API_KEY:-}" ] \
