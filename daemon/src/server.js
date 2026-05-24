@@ -117,12 +117,15 @@ function findParticipantByRawToken(rawToken) {
 // Strip tokenHash before returning a participant over HTTP / WS.
 function safeParticipantView(p) {
   return {
-    speaker:    p.speaker,
-    pseudo:     p.pseudo,
-    joinedAt:   p.joinedAt,
-    lastSeenAt: p.lastSeenAt,
-    revokedAt:  p.revokedAt,
-    fromInvite: p.fromInvite,
+    speaker:         p.speaker,
+    pseudo:          p.pseudo,
+    joinedAt:        p.joinedAt,
+    lastSeenAt:      p.lastSeenAt,
+    revokedAt:       p.revokedAt,
+    fromInvite:      p.fromInvite,
+    firstIp:         p.firstIp ?? null,
+    lastIp:          p.lastIp ?? null,
+    connectionCount: p.connectionCount ?? 0,
   };
 }
 
@@ -217,7 +220,7 @@ function authenticate(token) {
 //   { error: "consumed" }       if the code was already used
 //   { error: "pseudo_taken" }   if the pseudo was claimed between the
 //                               form load and submit
-async function consumeInvite(code, pseudo) {
+async function consumeInvite(code, pseudo, firstIp) {
   return serialize(async () => {
     const inv = invites.get(code);
     if (!inv || inv.consumedAt) return { error: "consumed" };
@@ -225,20 +228,23 @@ async function consumeInvite(code, pseudo) {
     const now = new Date().toISOString();
     const rawToken = randomToken();
     const record = {
-      tokenHash:  hashToken(rawToken),
-      speaker:    randomUUID(),
+      tokenHash:       hashToken(rawToken),
+      speaker:         randomUUID(),
       pseudo,
-      joinedAt:   now,
-      lastSeenAt: now,
-      revokedAt:  null,
-      fromInvite: code,
+      joinedAt:        now,
+      lastSeenAt:      now,
+      revokedAt:       null,
+      fromInvite:      code,
+      // Audit fields for the admin UI. firstIp is locked at consume;
+      // lastIp + connectionCount track WS reconnect activity.
+      firstIp:         firstIp || null,
+      lastIp:          firstIp || null,
+      connectionCount: 0,
     };
     inv.consumedAt = now;
     inv.consumedBy = pseudo;
     participants.set(record.tokenHash, record);
     await Promise.all([persistInvites(), persistParticipants()]);
-    // rawToken is returned but never stored on disk — the participant
-    // browser is the only place it ever exists after this point.
     return { record, rawToken };
   });
 }
@@ -452,13 +458,17 @@ function renderShell({ title, header, body }) {
 </html>`;
 }
 
-function renderInvitePage({ code, sessionName, error, pseudo }) {
+function renderInvitePage({ code, sessionName, intendedFor, error, pseudo }) {
+  const greeting = intendedFor
+    ? `<p>Hey <strong>${htmlEscape(intendedFor)}</strong> — pseudo pré-rempli, libre à toi de le modifier.</p>`
+    : "";
   return renderShell({
     title:  `team-claude — invitation ${sessionName}`,
     header: `invitation · session ${htmlEscape(sessionName)}`,
     body: `<section>
     <h2>Choisis ton pseudo</h2>
-    <p class="muted" style="margin-top:0">Une fois rejoint·e, ton pseudo est fixe pour cette session. Choisis bien.</p>
+    ${greeting}
+    <p class="muted" style="margin-top:0">Une fois rejoint·e, ton pseudo est fixe pour cette session.</p>
     ${error ? `<p style="color:var(--err)">${htmlEscape(error)}</p>` : ""}
     <form method="POST" action="/invite/${htmlEscape(code)}" autocomplete="off">
       <div class="row">
@@ -630,7 +640,9 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (req.method === "GET") {
-      sendHtml(res, 200, renderInvitePage({ code, sessionName: SESSION_NAME }));
+      // Pre-fill the pseudo input with the admin's suggested name when set —
+      // still editable in case the participant prefers a different handle.
+      sendHtml(res, 200, renderInvitePage({ code, sessionName: SESSION_NAME, intendedFor: invite.intendedFor, pseudo: invite.intendedFor }));
       return;
     }
     if (req.method === "POST") {
@@ -638,16 +650,16 @@ const server = createServer(async (req, res) => {
       try { body = await readBody(req); } catch { res.writeHead(413).end("body too large"); return; }
       const pseudo = normalizePseudo(new URLSearchParams(body).get("pseudo"));
       if (!pseudo) {
-        sendHtml(res, 400, renderInvitePage({ code, sessionName: SESSION_NAME, error: "Pseudo requis.", pseudo }));
+        sendHtml(res, 400, renderInvitePage({ code, sessionName: SESSION_NAME, intendedFor: invite.intendedFor, error: "Pseudo requis.", pseudo }));
         return;
       }
-      const result = await consumeInvite(code, pseudo);
+      const result = await consumeInvite(code, pseudo, clientIp(req));
       if (result.error === "consumed") {
         sendHtml(res, 410, renderErrorPage({ sessionName: SESSION_NAME, title: "Invitation déjà utilisée", message: "Ce code vient d'être consommé." }));
         return;
       }
       if (result.error === "pseudo_taken") {
-        sendHtml(res, 409, renderInvitePage({ code, sessionName: SESSION_NAME, error: `Le pseudo « ${pseudo} » est déjà pris. Choisis-en un autre.`, pseudo }));
+        sendHtml(res, 409, renderInvitePage({ code, sessionName: SESSION_NAME, intendedFor: invite.intendedFor, error: `Le pseudo « ${pseudo} » est déjà pris. Choisis-en un autre.`, pseudo }));
         return;
       }
       const location = `/?token=${encodeURIComponent(result.rawToken)}`;
@@ -688,10 +700,24 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (req.method === "POST" && url.pathname === "/admin/invite") {
-      const inv = { code: randomCode(), createdAt: new Date().toISOString(), consumedAt: null, consumedBy: null };
+      // Optional `intendedFor` (form-encoded body) lets the host label the
+      // code with the name they're sending it to — visible in /admin and
+      // pre-fills the participant's pseudo input.
+      let intendedFor = null;
+      try {
+        const body = await readBody(req);
+        if (body) intendedFor = normalizePseudo(new URLSearchParams(body).get("intendedFor")) || null;
+      } catch { res.writeHead(413).end("body too large"); return; }
+      const inv = {
+        code:        randomCode(),
+        createdAt:   new Date().toISOString(),
+        intendedFor,
+        consumedAt:  null,
+        consumedBy:  null,
+      };
       invites.set(inv.code, inv);
       await persistInvites();
-      sendJson(res, 200, { code: inv.code, createdAt: inv.createdAt });
+      sendJson(res, 200, { code: inv.code, createdAt: inv.createdAt, intendedFor });
       return;
     }
     if (req.method === "GET" && url.pathname === "/admin/invites") {
@@ -756,6 +782,11 @@ server.on("upgrade", (req, socket, head) => {
   }
   const auth = authenticate(url.searchParams.get("token"));
   if (!auth) { socket.destroy(); return; }
+  if (auth.kind === "participant") {
+    auth.record.connectionCount = (auth.record.connectionCount ?? 0) + 1;
+    auth.record.lastIp = clientIp(req);
+    scheduleLastSeenFlush();
+  }
   wss.handleUpgrade(req, socket, head, (ws) => {
     ws._auth = auth;
     wss.emit("connection", ws, req);

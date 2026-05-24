@@ -38,15 +38,16 @@
     <section>
       <h2>Invitations</h2>
       <div class="actions-row" style="margin-bottom: 1rem">
+        <input id="intended-for" type="text" maxlength="32" placeholder="Pour qui ? (optionnel — pré-rempli côté participant)" style="flex:1;min-width:14rem">
         <button id="mint-btn" type="button">+ Générer un nouveau code</button>
         <button id="reload-btn" type="button" class="secondary">↻ Recharger</button>
         <span class="muted" id="auto-refresh-hint">auto-refresh: 5s</span>
       </div>
       <table id="invites-table">
         <thead>
-          <tr><th>Code</th><th>Créé</th><th>URL à partager</th><th>État</th></tr>
+          <tr><th>Code</th><th>Pour</th><th>Créé</th><th>URL à partager</th><th>État</th></tr>
         </thead>
-        <tbody id="invites-body"><tr><td colspan="4" class="muted">(chargement…)</td></tr></tbody>
+        <tbody id="invites-body"><tr><td colspan="5" class="muted">(chargement…)</td></tr></tbody>
       </table>
     </section>
 
@@ -54,9 +55,9 @@
       <h2>Participants</h2>
       <table id="participants-table">
         <thead>
-          <tr><th>Pseudo</th><th>Joined</th><th>Last seen</th><th>État</th><th>Action</th></tr>
+          <tr><th>Pseudo</th><th>Invité·e en tant que</th><th>Joined</th><th>Last seen</th><th>Conn.</th><th>IP</th><th>État</th><th>Action</th></tr>
         </thead>
-        <tbody id="participants-body"><tr><td colspan="5" class="muted">(chargement…)</td></tr></tbody>
+        <tbody id="participants-body"><tr><td colspan="8" class="muted">(chargement…)</td></tr></tbody>
       </table>
     </section>
   </main>
