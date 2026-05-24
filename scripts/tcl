@@ -95,15 +95,37 @@ cmd_auth() {
   local name="${1:-}"; [ -n "$name" ] || die "auth requires <name>"
   local src="${2:-$HOME/.claude/.credentials.json}"
   [ -f "$src" ] || die "no credentials at $src — run 'claude login' on this machine first, then retry"
+  local workspace="/home/devbox/workspace"
+
   echo "Copying $src → session-$name pod (/home/devbox/.claude/.credentials.json)…"
   kubectl exec -n "$NS" "session-$name-0" -c devcontainer -- \
     bash -c 'install -d -m 0700 /home/devbox/.claude'
-  # kubectl cp expects <namespace>/<pod>:<path>
   kubectl cp "$src" "$NS/session-$name-0:/home/devbox/.claude/.credentials.json" -c devcontainer
   kubectl exec -n "$NS" "session-$name-0" -c devcontainer -- \
     chmod 0600 /home/devbox/.claude/.credentials.json
-  echo "✓ done. The auth token is on the PVC and survives pod restarts."
-  echo "  Run 'tcl attach $name' to start a Claude session."
+
+  # Mark onboarding done + auto-trust the workspace so the welcome and
+  # "trust this folder?" prompts don't reappear on every pod start (they
+  # otherwise force the user through a full login flow on each device).
+  echo "Marking onboarding+workspace-trust as accepted on the pod…"
+  kubectl exec -n "$NS" "session-$name-0" -c devcontainer -- python3 -c "
+import json, os
+p = '/home/devbox/.claude/.claude.json'
+d = json.load(open(p)) if os.path.exists(p) else {}
+d['hasCompletedOnboarding'] = True
+d.setdefault('lastOnboardingVersion', '2.1.150')
+projects = d.setdefault('projects', {})
+proj = projects.setdefault('$workspace', {})
+proj['hasTrustDialogAccepted'] = True
+proj.setdefault('hasClaudeMdExternalIncludesApproved', True)
+tmp = p + '.tmp'
+os.umask(0o077)
+json.dump(d, open(tmp, 'w'))
+os.replace(tmp, p)
+print('  hasCompletedOnboarding:', d['hasCompletedOnboarding'])
+print('  projects[$workspace].hasTrustDialogAccepted:', proj['hasTrustDialogAccepted'])
+"
+  echo "✓ done. Auth + onboarding ready. Run 'tcl attach $name' to start Claude."
 }
 
 cmd_url() {
