@@ -66,6 +66,23 @@ RUN ARCH="${TARGETARCH:-amd64}" \
         | tar -xz -C /usr/local/bin k9s \
     && chmod +x /usr/local/bin/k9s
 
+# kubectl plugins via krew. Installed system-wide (KREW_ROOT) so they survive
+# the PVC mounting over /home/devbox at runtime — a per-user ~/.krew would be
+# shadowed. KREW_ROOT/bin on PATH makes `kubectl krew`, `kubectl cnpg`,
+# `kubectl oidc-login`, `kubectl ctx/ns` resolve for everyone, including the
+# non-interactive shells Claude spawns for Bash tool calls.
+ENV KREW_ROOT=/usr/local/krew
+ENV PATH=/usr/local/krew/bin:$PATH
+RUN ARCH="${TARGETARCH:-amd64}" \
+    && KARCH="$([ "$ARCH" = "arm64" ] && echo arm64 || echo amd64)" \
+    && cd /tmp \
+    && curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/krew-linux_${KARCH}.tar.gz" \
+    && tar -xzf "krew-linux_${KARCH}.tar.gz" \
+    && "./krew-linux_${KARCH}" install krew \
+    && kubectl krew install cnpg oidc-login ctx ns \
+    && rm -f "/tmp/krew-linux_${KARCH}.tar.gz" "/tmp/krew-linux_${KARCH}" \
+    && chmod -R a+rX "$KREW_ROOT"
+
 # Go toolchain (latest stable). `go` itself acts as the version manager via
 # `go install golang.org/dl/goX.Y@latest && goX.Y download` once installed.
 RUN ARCH="${TARGETARCH:-amd64}" \
