@@ -11,6 +11,8 @@ const els = {
   status:        $("status"),
   sessionName:   $("session-name"),
   name:          $("name"),
+  nameField:     $("name-field"),
+  identityChip:  $("identity-chip"),
   body:          $("body"),
   sendBtn:       $("send-btn"),
   stream:        $("stream-list"),
@@ -36,16 +38,17 @@ els.name.addEventListener("input", () => {
 
 function applyParticipantInfo(info) {
   if (info && info.pseudo) {
+    // Pseudo is fixed by the invite — no need to ask for it again. Hide the
+    // name field entirely and show who we're connected as instead.
     lockedPseudo = info.pseudo;
     els.name.value = info.pseudo;
-    els.name.readOnly = true;
-    els.name.title = "Pseudo défini à l'acceptation de l'invitation — non modifiable.";
-    const lbl = els.name.closest("label");
-    if (lbl) lbl.firstChild.textContent = "Pseudo (verrouillé) ";
+    els.nameField.classList.add("hidden");
+    els.identityChip.innerHTML = `Connecté·e en tant que <strong>${escapeHtml(info.pseudo)}</strong>`;
+    els.identityChip.classList.remove("hidden");
   } else {
     lockedPseudo = null;
-    els.name.readOnly = false;
-    els.name.title = "";
+    els.nameField.classList.remove("hidden");
+    els.identityChip.classList.add("hidden");
   }
 }
 

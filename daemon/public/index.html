@@ -26,13 +26,21 @@
     </section>
 
     <section id="compose">
-      <h2>Drop un message</h2>
-      <div class="row">
-        <label for="name">Nom <input id="name" placeholder="Alice" autocomplete="name"></label>
-        <button id="send-btn" type="button" disabled>Envoyer</button>
+      <h2>Ton message</h2>
+      <div id="identity">
+        <label for="name" id="name-field">Ton nom
+          <input id="name" placeholder="Ton prénom…" autocomplete="name">
+        </label>
+        <p id="identity-chip" class="identity-chip hidden"></p>
       </div>
-      <label for="body" class="hidden">Message</label>
-      <textarea id="body" rows="3" placeholder="Écris ton message ici… (Ctrl/Cmd+Entrée pour envoyer)"></textarea>
+      <div class="composer">
+        <label for="body" class="hidden">Message</label>
+        <textarea id="body" rows="2" placeholder="Écris quelque chose à l'équipe…"></textarea>
+        <div class="composer-bar">
+          <span class="composer-hint muted" aria-hidden="true">⏎ Ctrl/Cmd + Entrée pour envoyer</span>
+          <button id="send-btn" type="button" disabled>Envoyer <span aria-hidden="true">➤</span></button>
+        </div>
+      </div>
     </section>
   </main>
 

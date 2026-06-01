@@ -223,6 +223,41 @@ button:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; filter: none
 
 ul { list-style: none; padding: 0; margin: 0; }
 
+/* -------------------------------------------------------------- Composer -- */
+
+#identity { margin-bottom: var(--space-3); }
+#identity label { max-width: 20rem; }
+.identity-chip {
+  margin: 0; display: inline-flex; align-items: center; gap: 0.45rem;
+  font-size: 0.85rem; color: var(--muted);
+  padding: 0.35rem 0.75rem; border-radius: 999px;
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
+}
+.identity-chip strong { color: var(--fg); }
+
+.composer {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface-2); overflow: hidden;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+.composer textarea {
+  border: none; background: transparent; width: 100%; display: block;
+  padding: var(--space-3); min-height: 3.6rem; resize: vertical;
+}
+.composer textarea:focus-visible { outline: none; box-shadow: none; }
+.composer-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-2); padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+.composer-hint { font-size: 0.75rem; }
+#send-btn { border-radius: 999px; padding: 0.5rem 1.15rem; }
+#send-btn span { font-size: 0.85em; margin-left: 0.15rem; }
+@media (max-width: 640px) { .composer-hint { display: none; } }
+
 /* ---------------------------------------------------- Participant stream -- */
 
 #stream-list {
