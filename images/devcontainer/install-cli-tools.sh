@@ -56,3 +56,14 @@ tar -xzf "krew-linux_${KARCH}.tar.gz"
 kubectl krew install cnpg oidc-login ctx ns
 rm -f "/tmp/krew-linux_${KARCH}.tar.gz" "/tmp/krew-linux_${KARCH}"
 chmod -R a+rX "$KREW_ROOT"
+
+# Login shells (e.g. the code-server integrated terminal) re-derive PATH from
+# /etc/profile, which drops the image's ENV PATH. Make the plugins resolvable
+# regardless by symlinking them into /usr/local/bin (always on PATH), and export
+# KREW_ROOT via profile.d so `kubectl krew` manages the system-wide root.
+ln -sf "$KREW_ROOT"/bin/kubectl-* /usr/local/bin/
+cat > /etc/profile.d/krew.sh <<'PROFILE'
+export KREW_ROOT=/usr/local/krew
+export PATH="$KREW_ROOT/bin:$PATH"
+PROFILE
+chmod 0644 /etc/profile.d/krew.sh
