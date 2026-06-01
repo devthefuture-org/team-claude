@@ -1,24 +1,24 @@
 <!doctype html>
-<html lang="fr" style="background:#111;color:#e5e5e5">
+<html lang="fr">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="dark">
   <title>team-claude — participant</title>
+  <script>try{var t=localStorage.getItem("team-claude.theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
   <link rel="stylesheet" href="/app.css">
-  <style>html,body{background:#111;color:#e5e5e5}</style>
 </head>
 <body>
   <header>
     <h1>team-claude</h1>
     <span id="session-name" class="muted">connexion…</span>
-    <span id="status" class="status status-offline">offline</span>
+    <span class="spacer"></span>
+    <span id="status" class="status status-offline" role="status" aria-live="polite">offline</span>
   </header>
 
   <main>
     <section id="claude-stream">
       <h2>Claude</h2>
-      <ul id="stream-list" class="muted">(en attente…)</ul>
+      <ul id="stream-list" class="muted" aria-live="polite" aria-label="Flux Claude en direct">(en attente…)</ul>
       <div id="thinking" class="thinking hidden" aria-live="polite">
         <span class="spinner" aria-hidden="true"></span>
         <span class="thinking-verb">Réfléchit</span><span class="thinking-dots">…</span>
@@ -28,9 +28,10 @@
     <section id="compose">
       <h2>Drop un message</h2>
       <div class="row">
-        <label>Nom <input id="name" placeholder="Alice" autocomplete="name"></label>
+        <label for="name">Nom <input id="name" placeholder="Alice" autocomplete="name"></label>
         <button id="send-btn" type="button" disabled>Envoyer</button>
       </div>
+      <label for="body" class="hidden">Message</label>
       <textarea id="body" rows="3" placeholder="Écris ton message ici… (Ctrl/Cmd+Entrée pour envoyer)"></textarea>
     </section>
   </main>

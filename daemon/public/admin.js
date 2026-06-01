@@ -1,4 +1,5 @@
 import { escapeHtml, formatDateTime as fmtTime } from "/util.js";
+import { toast, confirmDialog, promptDialog, copyToClipboard, mountThemeToggle } from "/ui.js";
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -12,9 +13,12 @@ const els = {
   mintBtn:              $("mint-btn"),
   reloadBtn:            $("reload-btn"),
   intendedFor:          $("intended-for"),
+  loading:              $("loading"),
 };
 
 const POLL_MS = 5000;
+
+mountThemeToggle();
 
 if (!TOKEN) {
   els.sessionName.textContent = "manque ?token=… dans l'URL";
@@ -30,14 +34,6 @@ function setOnline(ok) {
   els.status.classList.toggle("status-offline", !ok);
 }
 
-function toast(msg, kind = "ok") {
-  const el = document.createElement("div");
-  el.className = `toast ${kind}`;
-  el.textContent = msg;
-  document.body.appendChild(el);
-  setTimeout(() => el.remove(), 3000);
-}
-
 async function api(method, path, body) {
   const url = `${path}?token=${encodeURIComponent(TOKEN)}`;
   const opts = { method };
@@ -48,18 +44,15 @@ async function api(method, path, body) {
   const r = await fetch(url, opts);
   if (!r.ok) {
     const txt = await r.text().catch(() => "");
-    throw new Error(`${method} ${path} → ${r.status} ${txt}`);
+    const err = new Error(`${method} ${path} → ${r.status} ${txt}`.trim());
+    err.status = r.status;
+    throw err;
   }
   return r.json();
 }
 
 function inviteUrl(code) {
   return `${location.origin}/invite/${code}`;
-}
-
-async function copy(text) {
-  try { await navigator.clipboard.writeText(text); toast("URL copiée"); }
-  catch { toast("Impossible de copier (HTTPS requis)", "err"); }
 }
 
 // participants keyed by their fromInvite code → cross-ref for both tables.
@@ -84,24 +77,24 @@ function renderInvites(invites) {
       ? `<strong>${escapeHtml(inv.intendedFor)}</strong>`
       : `<span class="muted">—</span>`;
     const actionsCell = consumed ? `<span class="muted">—</span>` : `
-      <button class="secondary" data-edit="${escapeHtml(inv.code)}" data-current="${escapeHtml(inv.intendedFor ?? "")}" title="Éditer le nom prévu" type="button">✎</button>
-      <button class="secondary" data-regen="${escapeHtml(inv.code)}" title="Régénérer le code (l'ancienne URL devient invalide)" type="button">↻</button>
-      <button class="danger"    data-del="${escapeHtml(inv.code)}"   title="Supprimer ce code en attente" type="button">✕</button>`;
+      <button class="btn-ghost btn-icon" data-edit="${escapeHtml(inv.code)}" data-current="${escapeHtml(inv.intendedFor ?? "")}" aria-label="Éditer le nom prévu" title="Éditer le nom prévu" type="button">✎</button>
+      <button class="btn-ghost btn-icon" data-regen="${escapeHtml(inv.code)}" aria-label="Régénérer le code (l'ancienne URL devient invalide)" title="Régénérer le code" type="button">↻</button>
+      <button class="btn-danger btn-icon" data-del="${escapeHtml(inv.code)}" aria-label="Supprimer ce code en attente" title="Supprimer ce code" type="button">✕</button>`;
     return `<tr>
-      <td><code>${escapeHtml(inv.code)}</code></td>
-      <td>${intendedCell}</td>
-      <td>${fmtTime(inv.createdAt)}</td>
-      <td class="url-cell">${consumed
+      <td data-label="Code"><code>${escapeHtml(inv.code)}</code></td>
+      <td data-label="Pour">${intendedCell}</td>
+      <td data-label="Créé">${fmtTime(inv.createdAt)}</td>
+      <td class="url-cell" data-label="URL">${consumed
         ? `<span class="muted">consommé par <strong>${escapeHtml(inv.consumedBy)}</strong> le ${fmtTime(inv.consumedAt)}</span>`
-        : `<a href="${escapeHtml(url)}" target="_blank">${escapeHtml(url)}</a>
-           <button class="secondary" data-copy="${escapeHtml(url)}" type="button" style="margin-left:0.5rem">copier</button>`}
+        : `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(url)}</a>
+           <button class="btn-ghost" data-copy="${escapeHtml(url)}" aria-label="Copier l'URL d'invitation" type="button" style="margin-left:0.5rem">copier</button>`}
       </td>
-      <td><span class="pill ${consumed ? "consumed" : "pending"}">${consumed ? "consommé" : "en attente"}</span></td>
-      <td><div class="actions-row" style="gap:0.25rem">${actionsCell}</div></td>
+      <td data-label="État"><span class="pill ${consumed ? "consumed" : "pending"}">${consumed ? "consommé" : "en attente"}</span></td>
+      <td data-label="Actions"><div class="actions-row" style="gap:0.25rem">${actionsCell}</div></td>
     </tr>`;
   }).join("");
   els.invitesBody.querySelectorAll("button[data-copy]").forEach(btn => {
-    btn.addEventListener("click", () => copy(btn.dataset.copy));
+    btn.addEventListener("click", () => copyToClipboard(btn.dataset.copy, "URL copiée"));
   });
   els.invitesBody.querySelectorAll("button[data-edit]").forEach(btn => {
     btn.addEventListener("click", () => editInvite(btn.dataset.edit, btn.dataset.current));
@@ -115,7 +108,14 @@ function renderInvites(invites) {
 }
 
 async function editInvite(code, current) {
-  const next = prompt("Nouveau nom pour ce code (vide = enlever):", current ?? "");
+  const next = await promptDialog({
+    title: "Nom prévu pour ce code",
+    label: "Laisser vide pour enlever le nom",
+    value: current ?? "",
+    placeholder: "Alice",
+    maxlength: 32,
+    confirmLabel: "Enregistrer",
+  });
   if (next === null) return;  // user cancelled
   try {
     const r = await api("POST", `/admin/invite/${encodeURIComponent(code)}`, { action: "edit", intendedFor: next });
@@ -125,17 +125,28 @@ async function editInvite(code, current) {
 }
 
 async function regenerateInvite(code) {
-  if (!confirm(`Régénérer ce code ?\n\nL'URL d'invitation actuelle (${code}) sera invalidée immédiatement et un nouveau code sera mint avec le même nom prévu. L'URL copiée précédemment ne fonctionnera plus.`)) return;
+  const ok = await confirmDialog({
+    title: "Régénérer ce code ?",
+    message: `L'URL actuelle (${code}) sera invalidée immédiatement et un nouveau code sera généré avec le même nom prévu. Le lien déjà partagé ne fonctionnera plus.`,
+    confirmLabel: "Régénérer",
+    danger: true,
+  });
+  if (!ok) return;
   try {
     const r = await api("POST", `/admin/invite/${encodeURIComponent(code)}`, { action: "regenerate" });
-    await copy(inviteUrl(r.code));
-    toast(`Code régénéré : ${r.code} (URL copiée)`);
+    await copyToClipboard(inviteUrl(r.code), `Code régénéré : ${r.code} (URL copiée)`);
     await refresh();
   } catch (e) { toast(`Erreur: ${e.message}`, "err"); }
 }
 
 async function deleteInvite(code) {
-  if (!confirm(`Supprimer ce code d'invitation en attente ?\n\nLe lien envoyé ne fonctionnera plus.`)) return;
+  const ok = await confirmDialog({
+    title: "Supprimer ce code ?",
+    message: "Le lien d'invitation déjà envoyé ne fonctionnera plus.",
+    confirmLabel: "Supprimer",
+    danger: true,
+  });
+  if (!ok) return;
   try {
     await api("POST", `/admin/invite/${encodeURIComponent(code)}`, { action: "delete" });
     toast(`Code ${code} supprimé`);
@@ -161,24 +172,30 @@ function renderParticipants(participants) {
           : `${escapeHtml(p.firstIp)}`)
       : `<span class="muted">—</span>`;
     return `<tr>
-      <td><strong>${escapeHtml(p.pseudo)}</strong></td>
-      <td>${invitedAs}</td>
-      <td>${fmtTime(p.joinedAt)}</td>
-      <td>${fmtTime(p.lastSeenAt)}</td>
-      <td>${p.connectionCount ?? 0}</td>
-      <td class="url-cell">${ipCell}</td>
-      <td>${revoked
+      <td data-label="Pseudo"><strong>${escapeHtml(p.pseudo)}</strong></td>
+      <td data-label="Invité·e en tant que">${invitedAs}</td>
+      <td data-label="Joined">${fmtTime(p.joinedAt)}</td>
+      <td data-label="Last seen">${fmtTime(p.lastSeenAt)}</td>
+      <td data-label="Conn.">${p.connectionCount ?? 0}</td>
+      <td class="url-cell" data-label="IP">${ipCell}</td>
+      <td data-label="État">${revoked
         ? `<span class="pill revoked" title="révoqué le ${escapeHtml(p.revokedAt)}">révoqué</span>`
         : `<span class="pill active">actif</span>`}</td>
-      <td>${revoked
+      <td data-label="Action">${revoked
         ? `<span class="muted">—</span>`
-        : `<button class="danger" data-revoke="${escapeHtml(p.pseudo)}" type="button">Révoquer</button>`}</td>
+        : `<button class="btn-danger" data-revoke="${escapeHtml(p.pseudo)}" type="button">Révoquer</button>`}</td>
     </tr>`;
   }).join("");
   els.participantsBody.querySelectorAll("button[data-revoke]").forEach(btn => {
     btn.addEventListener("click", async () => {
       const pseudo = btn.dataset.revoke;
-      if (!confirm(`Révoquer le token de ${pseudo} ? Sa WS sera fermée immédiatement et il devra utiliser une nouvelle invitation pour revenir.`)) return;
+      const ok = await confirmDialog({
+        title: `Révoquer ${pseudo} ?`,
+        message: "Sa connexion sera fermée immédiatement et il devra utiliser une nouvelle invitation pour revenir.",
+        confirmLabel: "Révoquer",
+        danger: true,
+      });
+      if (!ok) return;
       btn.disabled = true;
       try {
         await api("POST", "/admin/revoke", { pseudo });
@@ -192,7 +209,11 @@ function renderParticipants(participants) {
   });
 }
 
+let refreshing = false;
 async function refresh() {
+  if (refreshing) return;
+  refreshing = true;
+  els.loading.classList.remove("hidden");
   try {
     const [invitesResp, participantsResp, sessionResp] = await Promise.all([
       api("GET", "/admin/invites"),
@@ -206,9 +227,15 @@ async function refresh() {
     renderParticipants(participantsResp.participants ?? []);
   } catch (e) {
     setOnline(false);
-    if (String(e.message).includes("401")) {
+    if (e.status === 401) {
       els.sessionName.textContent = "token invalide (401)";
+      toast("Token admin invalide (401)", "err");
+    } else {
+      toast(`Connexion perdue : ${e.message}`, "err");
     }
+  } finally {
+    els.loading.classList.add("hidden");
+    refreshing = false;
   }
 }
 
@@ -217,8 +244,8 @@ async function mintInvite() {
   try {
     const intendedFor = els.intendedFor.value.trim();
     const { code } = await api("POST", "/admin/invite", intendedFor ? { intendedFor } : null);
-    await copy(inviteUrl(code));
-    toast(intendedFor ? `Invitation pour ${intendedFor} générée + URL copiée` : "Nouvelle invitation générée + URL copiée");
+    await copyToClipboard(inviteUrl(code),
+      intendedFor ? `Invitation pour ${intendedFor} générée + URL copiée` : "Nouvelle invitation générée + URL copiée");
     els.intendedFor.value = "";
     await refresh();
   } catch (e) {

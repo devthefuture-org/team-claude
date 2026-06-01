@@ -441,42 +441,46 @@ function broadcast(payload) {
   }
 }
 
-function renderShell({ title, header, body }) {
+function renderShell({ title, header, body, centered = false }) {
   return `<!doctype html>
-<html lang="fr" style="background:#111;color:#e5e5e5">
+<html lang="fr">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="dark">
 <title>${htmlEscape(title)}</title>
+<script>try{var t=localStorage.getItem("team-claude.theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<header><h1>team-claude</h1><span class="muted">${header}</span></header>
-<main>${body}</main>
+<header><h1>team-claude</h1><span class="muted">${header}</span><span class="spacer"></span></header>
+<main${centered ? ` class="centered"` : ""}>${body}</main>
+<script type="module">import { mountThemeToggle } from "/ui.js"; mountThemeToggle();</script>
 </body>
 </html>`;
 }
 
 function renderInvitePage({ code, sessionName, intendedFor, error, pseudo }) {
   const greeting = intendedFor
-    ? `<p>Hey <strong>${htmlEscape(intendedFor)}</strong> — pseudo pré-rempli, libre à toi de le modifier.</p>`
-    : "";
+    ? `<p>Hey <strong>${htmlEscape(intendedFor)}</strong> 👋 — on t'a réservé une place. Le pseudo est pré-rempli, libre à toi de le changer.</p>`
+    : `<p>Tu es invité·e à suivre cette session en direct et à y déposer des messages.</p>`;
   return renderShell({
     title:  `team-claude — invitation ${sessionName}`,
     header: `invitation · session ${htmlEscape(sessionName)}`,
-    body: `<section>
+    centered: true,
+    body: `<section class="card-narrow">
     <h2>Choisis ton pseudo</h2>
     ${greeting}
-    <p class="muted" style="margin-top:0">Une fois rejoint·e, ton pseudo est fixe pour cette session.</p>
-    ${error ? `<p style="color:var(--err)">${htmlEscape(error)}</p>` : ""}
+    <p class="muted">Une fois rejoint·e, ton pseudo est fixe pour cette session.</p>
+    ${error ? `<p class="form-error" id="invite-error" role="alert">${htmlEscape(error)}</p>` : ""}
     <form method="POST" action="/invite/${htmlEscape(code)}" autocomplete="off">
       <div class="row">
-        <label>Pseudo
-          <input name="pseudo" required minlength="1" maxlength="32" autofocus value="${htmlEscape(pseudo ?? "")}" placeholder="Alice">
+        <label for="pseudo">Pseudo
+          <input id="pseudo" name="pseudo" required minlength="1" maxlength="32" autofocus
+                 value="${htmlEscape(pseudo ?? "")}" placeholder="Alice"
+                 ${error ? `aria-describedby="invite-error" aria-invalid="true"` : ""}>
         </label>
-        <button type="submit">Rejoindre</button>
       </div>
+      <button type="submit">Rejoindre la session</button>
     </form>
   </section>`,
   });
@@ -486,9 +490,12 @@ function renderErrorPage({ sessionName, title, message }) {
   return renderShell({
     title:  `team-claude — ${title}`,
     header: `session ${htmlEscape(sessionName)}`,
-    body: `<section>
+    centered: true,
+    body: `<section class="card-narrow" role="alert">
+  <div class="state-icon err" aria-hidden="true">⚠</div>
   <h2 style="color:var(--err)">${htmlEscape(title)}</h2>
   <p>${htmlEscape(message)}</p>
+  <p class="muted">Demande un nouveau lien d'invitation au host de la session.</p>
 </section>`,
   });
 }
@@ -663,8 +670,20 @@ const server = createServer(async (req, res) => {
         return;
       }
       const location = `/?token=${encodeURIComponent(result.rawToken)}`;
-      res.writeHead(302, { "Location": location, "Content-Type": "text/plain" });
-      res.end(`Redirecting to ${location}`);
+      // 302 redirects instantly; the body is only seen if the client doesn't
+      // auto-follow — give it a styled fallback with a manual link.
+      const fallback = renderShell({
+        title: "team-claude — connexion…",
+        header: `session ${htmlEscape(SESSION_NAME)}`,
+        centered: true,
+        body: `<section class="card-narrow" style="text-align:center">
+  <div class="spinner" style="margin:0 auto 0.75rem"></div>
+  <p>Connexion à la session…</p>
+  <p class="muted"><a href="${htmlEscape(location)}">Continuer manuellement</a> si rien ne se passe.</p>
+</section>`,
+      });
+      res.writeHead(302, { "Location": location, "Content-Type": "text/html; charset=utf-8" });
+      res.end(fallback);
       return;
     }
     res.writeHead(405).end("method not allowed");

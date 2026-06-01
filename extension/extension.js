@@ -144,12 +144,17 @@ class TeamClaudePanel {
   input, textarea, button {
     font: inherit; color: var(--vscode-input-foreground);
     background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent));
-    padding: 4px 6px; border-radius: 2px;
+    padding: 4px 6px; border-radius: 3px;
   }
+  :focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
   textarea { width: 100%; resize: vertical; min-height: 60px; }
   button { background: var(--vscode-button-background); color: var(--vscode-button-foreground);
-           border: none; cursor: pointer; padding: 4px 10px; }
+           border: none; cursor: pointer; padding: 4px 10px; transition: background-color .12s ease; }
   button:hover { background: var(--vscode-button-hoverBackground); }
+  button:active { opacity: 0.85; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  @keyframes sent-flash { from { box-shadow: 0 0 0 1px var(--vscode-testing-iconPassed, #4ec9b0); } to { box-shadow: 0 0 0 1px transparent; } }
+  .flash-sent { animation: sent-flash .6s ease-out; }
   h3 { font-size: 0.85rem; margin: 12px 0 4px; text-transform: uppercase; opacity: 0.6; }
   ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
   .hidden { display: none !important; }
@@ -219,12 +224,15 @@ class TeamClaudePanel {
     vscode.setState({ ...vscode.getState(), name: $("name").value });
   });
   function cmd(c) { vscode.postMessage({ cmd: c }); }
+  let pendingSelfEcho = false;
   function sendMsg() {
     const body = $("body").value.trim();
     const name = $("name").value.trim();
     if (!body || !name) return;
     vscode.postMessage({ cmd: "send", payload: { speaker, name, body } });
+    pendingSelfEcho = true;
     $("body").value = "";
+    $("body").focus();
   }
   $("body").addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); sendMsg(); }
@@ -289,6 +297,7 @@ class TeamClaudePanel {
     li.innerHTML = \`<div class="meta"><strong>\${escapeHtml(ev.name||ev.speaker)}</strong>
       <span>· \${formatTime(ev.ts)}</span></div>
       <div class="body">\${escapeHtml(ev.body)}</div>\`;
+    if (pendingSelfEcho && ev.speaker === speaker) { li.classList.add("flash-sent"); pendingSelfEcho = false; }
     ul.prepend(li);
     while (ul.children.length > 30) ul.lastChild.remove();
   }

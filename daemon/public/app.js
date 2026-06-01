@@ -1,4 +1,7 @@
 import { escapeHtml, formatTime } from "/util.js";
+import { mountThemeToggle } from "/ui.js";
+
+mountThemeToggle();
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -46,11 +49,14 @@ function applyParticipantInfo(info) {
   }
 }
 
-function setOnline(online) {
-  els.status.textContent = online ? "online" : "offline";
-  els.status.classList.toggle("status-online", online);
-  els.status.classList.toggle("status-offline", !online);
-  els.sendBtn.disabled = !online;
+// state: "online" | "offline" | "reconnecting"
+function setStatus(state) {
+  const label = { online: "online", offline: "offline", reconnecting: "reconnexion…" }[state];
+  els.status.textContent = label;
+  els.status.classList.toggle("status-online", state === "online");
+  els.status.classList.toggle("status-offline", state === "offline");
+  els.status.classList.toggle("status-pending", state === "reconnecting");
+  els.sendBtn.disabled = state !== "online";
 }
 
 // ---------------------------------------------------------- Thinking spinner
@@ -118,12 +124,24 @@ function appendClaudeEntry(entry) {
   streamAppend(li);
 }
 
+// Set when we send; the next matching echo from the daemon gets a brief
+// highlight so the sender sees their message landed.
+let pendingSelfEcho = false;
+
+function isSelfEcho(ev) {
+  return (lockedPseudo && ev.name === lockedPseudo) || ev.speaker === mySpeaker;
+}
+
 function appendParticipantEntry(ev) {
   if (!ev.body) return;
   const li = document.createElement("li");
   li.className = "participant";
   li.innerHTML = `<div class="meta">${formatTime(ev.ts)} · <strong>${escapeHtml(ev.name || ev.speaker)}</strong></div>
     <div class="body">${escapeHtml(ev.body)}</div>`;
+  if (pendingSelfEcho && isSelfEcho(ev)) {
+    li.classList.add("flash-sent");
+    pendingSelfEcho = false;
+  }
   streamAppend(li);
 }
 
@@ -163,9 +181,9 @@ function connect() {
   }
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   ws = new WebSocket(`${proto}//${location.host}/ws?token=${encodeURIComponent(TOKEN)}`);
-  ws.addEventListener("open",  () => setOnline(true));
-  ws.addEventListener("close", () => { setOnline(false); setTimeout(connect, 2000); });
-  ws.addEventListener("error", () => setOnline(false));
+  ws.addEventListener("open",  () => setStatus("online"));
+  ws.addEventListener("close", () => { setStatus("reconnecting"); setTimeout(connect, 2000); });
+  ws.addEventListener("error", () => setStatus("reconnecting"));
   ws.addEventListener("message", (m) => {
     const msg = JSON.parse(m.data);
     switch (msg.kind) {
@@ -208,6 +226,7 @@ function sendMessage() {
       })();
   if (!payload) return;
   ws?.send(JSON.stringify(payload));
+  pendingSelfEcho = true;
   els.body.value = "";
   els.body.focus();
 }
