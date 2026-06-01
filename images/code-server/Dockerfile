@@ -18,6 +18,15 @@ RUN apt-get update \
     && npm install -g @anthropic-ai/claude-code@2.1.150 \
     && npm cache clean --force
 
+# Same CLI tooling as the devcontainer (gh, jq, kubectl, helm, yq, k9s, krew +
+# plugins) so the code-server integrated terminal has them too. Shared script
+# lives under the devcontainer image dir; this build's context is the repo root.
+ARG TARGETARCH
+ENV KREW_ROOT=/usr/local/krew
+ENV PATH=/usr/local/krew/bin:$PATH
+COPY images/devcontainer/install-cli-tools.sh /usr/local/bin/install-cli-tools.sh
+RUN bash /usr/local/bin/install-cli-tools.sh
+
 # Use Microsoft VS Code Marketplace so we get the latest official build of
 # every extension (Open VSX often lags). Resolved at install time below.
 ENV EXTENSIONS_GALLERY='{"serviceUrl": "https://marketplace.visualstudio.com/_apis/public/gallery", "cacheUrl": "https://vscode.blob.core.windows.net/gallery/index", "itemUrl": "https://marketplace.visualstudio.com/items"}'

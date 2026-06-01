@@ -37,51 +37,16 @@ RUN apt-get update \
     && chmod 0440 /etc/sudoers.d/devbox \
     && rm -rf /var/lib/apt/lists/*
 
-# GitHub CLI from its apt repo.
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-        | dd of=/etc/apt/keyrings/githubcli-archive-keyring.gpg \
-    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-        > /etc/apt/sources.list.d/github-cli.list \
-    && apt-get update && apt-get install -y --no-install-recommends gh \
-    && rm -rf /var/lib/apt/lists/*
-
-# Static / single-binary tools. ARCH detection so the image stays
-# multi-arch-ready if we add platforms later.
+# CLI tooling (gh, jq, kubectl, helm, yq, k9s, krew + plugins). Shared with the
+# code-server image via install-cli-tools.sh so there's a single source of
+# truth. krew lives under KREW_ROOT=/usr/local/krew (survives the PVC mount over
+# $HOME); KREW_ROOT/bin on PATH makes `kubectl krew/cnpg/oidc-login/ctx/ns`
+# resolve everywhere, including the non-interactive shells Claude spawns.
 ARG TARGETARCH
-RUN ARCH="${TARGETARCH:-amd64}" \
-    && KARCH="$([ "$ARCH" = "arm64" ] && echo arm64 || echo amd64)" \
-    # kubectl
-    && curl -fsSLo /usr/local/bin/kubectl \
-        "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/$KARCH/kubectl" \
-    && chmod +x /usr/local/bin/kubectl \
-    # helm
-    && curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash \
-    # yq (mikefarah)
-    && curl -fsSLo /usr/local/bin/yq \
-        "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$KARCH" \
-    && chmod +x /usr/local/bin/yq \
-    # k9s
-    && curl -fsSL "https://github.com/derailed/k9s/releases/latest/download/k9s_Linux_$KARCH.tar.gz" \
-        | tar -xz -C /usr/local/bin k9s \
-    && chmod +x /usr/local/bin/k9s
-
-# kubectl plugins via krew. Installed system-wide (KREW_ROOT) so they survive
-# the PVC mounting over /home/devbox at runtime — a per-user ~/.krew would be
-# shadowed. KREW_ROOT/bin on PATH makes `kubectl krew`, `kubectl cnpg`,
-# `kubectl oidc-login`, `kubectl ctx/ns` resolve for everyone, including the
-# non-interactive shells Claude spawns for Bash tool calls.
 ENV KREW_ROOT=/usr/local/krew
 ENV PATH=/usr/local/krew/bin:$PATH
-RUN ARCH="${TARGETARCH:-amd64}" \
-    && KARCH="$([ "$ARCH" = "arm64" ] && echo arm64 || echo amd64)" \
-    && cd /tmp \
-    && curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/krew-linux_${KARCH}.tar.gz" \
-    && tar -xzf "krew-linux_${KARCH}.tar.gz" \
-    && "./krew-linux_${KARCH}" install krew \
-    && kubectl krew install cnpg oidc-login ctx ns \
-    && rm -f "/tmp/krew-linux_${KARCH}.tar.gz" "/tmp/krew-linux_${KARCH}" \
-    && chmod -R a+rX "$KREW_ROOT"
+COPY install-cli-tools.sh /usr/local/bin/install-cli-tools.sh
+RUN bash /usr/local/bin/install-cli-tools.sh
 
 # Go toolchain (latest stable). `go` itself acts as the version manager via
 # `go install golang.org/dl/goX.Y@latest && goX.Y download` once installed.
