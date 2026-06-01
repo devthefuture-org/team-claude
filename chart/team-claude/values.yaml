@@ -60,12 +60,18 @@ devcontainer:
 codeServer:
   enabled: true
   port: 8080
+  # IDE-delivery layer — intentionally kept as a swappable image so we can move
+  # to openvscode-server (or another browser IDE) without touching the rest of
+  # the stack. See docs/adr/0001-ide-delivery-code-server-vs-coder.md for why we
+  # stay on a single code-server container rather than adopting Coder for now.
   image:
     # Custom image: codercom/code-server + Node.js + claude CLI pre-baked.
     # Source: images/code-server/Dockerfile.
     repository: ghcr.io/devthefuture-org/team-claude-code-server
     tag: "latest"
-    pullPolicy: IfNotPresent
+    # Always: the image is a rolling :latest (like devcontainer/daemon), so a
+    # pod recreate must re-pull to pick up rebuilds.
+    pullPolicy: Always
   resources:
     requests:
       cpu: 100m
