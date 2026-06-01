@@ -36,6 +36,12 @@ function findLatestJsonl(projectDir) {
 
 function transformEntry(raw) {
   if (raw.type === "user" && raw.message?.role === "user") {
+    // Tool results come back as user-type messages whose content carries
+    // tool_result blocks. Surface them (outputs included) so the session is
+    // fully transparent — a leaked secret in a result is already in the
+    // transcript; showing it lets the host notice and rotate.
+    const results = extractToolResults(raw.message.content, raw.timestamp);
+    if (results) return results;
     const txt = extractText(raw.message.content);
     if (!txt) return null;
     // Claude's Monitor skill injects each participant drop into the
@@ -72,9 +78,48 @@ function extractText(content) {
 }
 
 // Caps to keep the streamed payload bounded (and to avoid dumping huge files).
-const MAX_PARAM_CHARS = 4000;
-const MAX_DIFF_LINES  = 400;
-const MAX_LINE_CHARS  = 300;
+const MAX_PARAM_CHARS  = 4000;
+const MAX_DIFF_LINES   = 400;
+const MAX_LINE_CHARS   = 300;
+const MAX_RESULT_LINES = 80;
+const MAX_RESULT_CHARS = 6000;
+
+// Flatten a tool_result `content` (string | array of text/image blocks) to text.
+function resultText(content) {
+  if (content == null) return "";
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map(c => {
+      if (typeof c === "string") return c;
+      if (c?.type === "text")  return c.text ?? "";
+      if (c?.type === "image") return "[image]";
+      return "";
+    }).join("\n");
+  }
+  return String(content);
+}
+
+function clampOutput(s) {
+  s = String(s).replace(/\s+$/, "");
+  const lines = s.split("\n");
+  let truncated = 0;
+  let arr = lines;
+  if (lines.length > MAX_RESULT_LINES) { arr = lines.slice(0, MAX_RESULT_LINES); truncated = lines.length - MAX_RESULT_LINES; }
+  let out = arr.join("\n");
+  if (out.length > MAX_RESULT_CHARS) { out = out.slice(0, MAX_RESULT_CHARS) + "…"; truncated = truncated || 1; }
+  return { output: out, truncated };
+}
+
+function extractToolResults(content, ts) {
+  if (!Array.isArray(content)) return null;
+  const out = [];
+  for (const b of content) {
+    if (b?.type !== "tool_result") continue;
+    const { output, truncated } = clampOutput(resultText(b.content));
+    out.push({ role: "tool_result", forId: b.tool_use_id, isError: !!b.is_error, output, truncated, ts });
+  }
+  return out.length ? out : null;
+}
 
 function clampStr(s, max = MAX_PARAM_CHARS) {
   s = String(s);

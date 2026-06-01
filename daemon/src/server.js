@@ -896,6 +896,7 @@ function claudeKey(entry) {
   // tool_use ids are unique and stable across `tail -n +1` re-emissions, so
   // they dedup exactly; fall back to content for text/user entries.
   if (entry.id) return `id:${entry.id}`;
+  if (entry.forId) return `res:${entry.forId}`;
   return `${entry.ts ?? ""}|${entry.role ?? ""}|${entry.text ?? ""}|${entry.tool ?? ""}|${entry.summary ?? ""}`;
 }
 

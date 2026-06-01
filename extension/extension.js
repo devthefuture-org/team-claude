@@ -192,6 +192,17 @@ class TeamClaudePanel {
   #stream .diff-line.del { background: var(--vscode-diffEditor-removedTextBackground, rgba(244,135,113,0.18)); }
   #stream .diff-line.ctx { opacity: 0.55; }
   #stream .diff-line.sep { height: 5px; }
+  #stream .tool-result { margin-top: 6px; }
+  #stream .result-head { font-size: 0.7em; opacity: 0.6; margin-bottom: 2px; }
+  #stream .tool-result.error .result-head { color: var(--vscode-errorForeground, #f48771); }
+  #stream .result-body {
+    font-family: var(--vscode-editor-font-family); white-space: pre-wrap; word-break: break-word;
+    margin: 0; padding: 4px 6px; border-radius: 4px; max-height: 200px; overflow: auto;
+    background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.12));
+    border-left: 2px solid var(--vscode-widget-border, rgba(127,127,127,0.4));
+  }
+  #stream .tool-result.error .result-body { border-left-color: var(--vscode-errorForeground, #f48771); }
+  #stream .result-empty { font-size: 0.85em; opacity: 0.5; font-style: italic; }
 
   /* Thinking indicator */
   .thinking { display: flex; align-items: center; gap: 6px; padding: 4px 6px; font-size: 0.85em; opacity: 0.8; }
@@ -283,6 +294,29 @@ class TeamClaudePanel {
     return head + params + diff;
   }
 
+  function renderResultHtml(entry) {
+    var note = entry.truncated ? ' · tronqué (+' + entry.truncated + ')' : '';
+    var head = '<div class="result-head">↳ ' + (entry.isError ? 'erreur' : 'résultat') + note + '</div>';
+    var body = entry.output
+      ? '<pre class="result-body">' + escapeHtml(entry.output) + '</pre>'
+      : '<div class="result-empty">(vide)</div>';
+    return '<div class="tool-result' + (entry.isError ? ' error' : '') + '" data-for="' + escapeHtml(entry.forId || '') + '">' + head + body + '</div>';
+  }
+  function cssEsc(s) { return (window.CSS && CSS.escape) ? CSS.escape(String(s)) : String(s).replace(/["\\\\]/g, '\\\\$&'); }
+  function appendToolResult(entry) {
+    var ul = $("stream");
+    var host = entry.forId && ul.querySelector('li.tool[data-id="' + cssEsc(entry.forId) + '"]');
+    var atBottom = ul.scrollTop + ul.clientHeight >= ul.scrollHeight - 20;
+    if (host) {
+      if (!host.querySelector('.tool-result[data-for="' + cssEsc(entry.forId) + '"]')) host.insertAdjacentHTML('beforeend', renderResultHtml(entry));
+    } else {
+      var li = document.createElement("li");
+      li.className = "tool"; li.innerHTML = renderResultHtml(entry);
+      ul.appendChild(li); while (ul.children.length > 200) ul.firstChild.remove();
+    }
+    if (atBottom) ul.scrollTop = ul.scrollHeight;
+  }
+
   const VERBS = ["Réfléchit","Cogite","Médite","Élucubre","Mijote","Lit","Cherche","Pèse","Compose","Tricote"];
   let verbTimer = null, dotsTimer = null;
   function showThinking(on) {
@@ -305,6 +339,7 @@ class TeamClaudePanel {
   function appendStream(entry) {
     clearStreamPlaceholder();
     const ul = $("stream");
+    if (entry.role === "tool_result") { appendToolResult(entry); return; }
     const li = document.createElement("li");
     if (entry.role === "user") {
       li.className = "user";
@@ -314,6 +349,7 @@ class TeamClaudePanel {
       li.innerHTML = \`<div class="meta">\${formatTime(entry.ts)} · Claude</div><div class="body">\${escapeHtml(entry.text)}</div>\`;
     } else if (entry.role === "assistant" && entry.tool) {
       li.className = "tool";
+      if (entry.id) li.dataset.id = entry.id;
       li.innerHTML = renderToolHtml(entry);
     } else return;
     const atBottom = ul.scrollTop + ul.clientHeight >= ul.scrollHeight - 20;

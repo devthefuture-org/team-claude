@@ -107,7 +107,10 @@ function streamAppend(li) {
   if (atBottom) els.stream.scrollTop = els.stream.scrollHeight;
 }
 
+const cssEsc = (s) => (window.CSS && CSS.escape) ? CSS.escape(String(s)) : String(s).replace(/["\\]/g, "\\$&");
+
 function appendClaudeEntry(entry) {
+  if (entry.role === "tool_result") { appendToolResult(entry); return; }
   const li = document.createElement("li");
   if (entry.role === "user") {
     li.className = "user";
@@ -119,11 +122,42 @@ function appendClaudeEntry(entry) {
       <div class="body">${escapeHtml(entry.text)}</div>`;
   } else if (entry.role === "assistant" && entry.tool) {
     li.className = "tool";
+    if (entry.id) li.dataset.id = entry.id;
     li.innerHTML = renderToolEntry(entry);
   } else {
     return;
   }
   streamAppend(li);
+}
+
+function renderResultBlock(entry) {
+  const note = entry.truncated
+    ? ` · tronqué (+${entry.truncated} ligne${entry.truncated > 1 ? "s" : ""})`
+    : "";
+  const head = `<div class="result-head">↳ ${entry.isError ? "erreur" : "résultat"}${note}</div>`;
+  const body = entry.output
+    ? `<pre class="result-body">${escapeHtml(entry.output)}</pre>`
+    : `<div class="result-empty muted">(vide)</div>`;
+  return `<div class="tool-result${entry.isError ? " error" : ""}" data-for="${escapeHtml(entry.forId ?? "")}">${head}${body}</div>`;
+}
+
+// Attach a tool result under its originating tool call when present, else
+// render it as a standalone card (e.g. if the call scrolled out of the buffer).
+function appendToolResult(entry) {
+  const atBottom = els.stream.scrollTop + els.stream.clientHeight >= els.stream.scrollHeight - 20;
+  const host = entry.forId && els.stream.querySelector(`li.tool[data-id="${cssEsc(entry.forId)}"]`);
+  if (host) {
+    if (!host.querySelector(`.tool-result[data-for="${cssEsc(entry.forId)}"]`)) {
+      host.insertAdjacentHTML("beforeend", renderResultBlock(entry));
+    }
+  } else {
+    const li = document.createElement("li");
+    li.className = "tool result-standalone";
+    li.innerHTML = renderResultBlock(entry);
+    els.stream.appendChild(li);
+    while (els.stream.children.length > 300) els.stream.firstChild.remove();
+  }
+  if (atBottom) els.stream.scrollTop = els.stream.scrollHeight;
 }
 
 function renderToolEntry(entry) {
