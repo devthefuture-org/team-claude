@@ -125,6 +125,23 @@ function openModal(render) {
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
 
+  const focusables = () =>
+    modal.querySelectorAll('button, [href], input, textarea, [tabindex]:not([tabindex="-1"])');
+
+  // Defined in the outer scope so close() can detach it (it was previously
+  // declared inside the Promise, which made close() throw "onKey is not defined"
+  // and left the dialog unresolved — e.g. revoke never completed).
+  function onKey(e) {
+    if (e.key === "Escape") { e.preventDefault(); render.onCancel(); return; }
+    if (e.key === "Tab") {
+      const items = Array.from(focusables());
+      if (!items.length) return;
+      const first = items[0], last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  }
+
   let settled = false;
   const close = (result, resolve) => {
     if (settled) return;
@@ -136,20 +153,6 @@ function openModal(render) {
   };
 
   return new Promise((resolve) => {
-    const focusables = () =>
-      modal.querySelectorAll('button, [href], input, textarea, [tabindex]:not([tabindex="-1"])');
-
-    function onKey(e) {
-      if (e.key === "Escape") { e.preventDefault(); render.onCancel(); return; }
-      if (e.key === "Tab") {
-        const items = Array.from(focusables());
-        if (!items.length) return;
-        const first = items[0], last = items[items.length - 1];
-        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-      }
-    }
-
     render.build(modal, {
       resolve: (v) => close(v, resolve),
     });
