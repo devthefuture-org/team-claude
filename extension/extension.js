@@ -177,6 +177,21 @@ class TeamClaudePanel {
   #stream .meta { font-size: 0.7em; opacity: 0.6; margin-bottom: 2px; }
   #stream .body { white-space: pre-wrap; }
   #stream .tool .tool-name { color: var(--vscode-charts-orange, #cca700); font-weight: 600; }
+  #stream .tool-target { font-family: var(--vscode-editor-font-family); opacity: 0.9; }
+  #stream .tool-params { display: grid; gap: 2px; margin-top: 4px; }
+  #stream .tool-param { display: flex; gap: 6px; flex-wrap: wrap; }
+  #stream .param-label { opacity: 0.6; min-width: 64px; }
+  #stream .param-val.mono { font-family: var(--vscode-editor-font-family); }
+  #stream .param-block, #stream .diff {
+    font-family: var(--vscode-editor-font-family); white-space: pre; overflow-x: auto;
+    padding: 4px 6px; border-radius: 4px; margin: 3px 0 0; flex: 1 1 100%;
+    background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.12));
+  }
+  #stream .diff-line { display: block; }
+  #stream .diff-line.add { background: var(--vscode-diffEditor-insertedTextBackground, rgba(78,201,176,0.18)); }
+  #stream .diff-line.del { background: var(--vscode-diffEditor-removedTextBackground, rgba(244,135,113,0.18)); }
+  #stream .diff-line.ctx { opacity: 0.55; }
+  #stream .diff-line.sep { height: 5px; }
 
   /* Thinking indicator */
   .thinking { display: flex; align-items: center; gap: 6px; padding: 4px 6px; font-size: 0.85em; opacity: 0.8; }
@@ -244,6 +259,30 @@ class TeamClaudePanel {
     try { return new Date(ts).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"}); } catch { return ""; }
   }
 
+  function renderToolHtml(entry) {
+    var head = '<div class="meta">🔧 <span class="tool-name">' + escapeHtml(entry.tool) + '</span>'
+      + (entry.summary ? ' <span class="tool-target">' + escapeHtml(entry.summary) + '</span>' : '') + '</div>';
+    var params = '';
+    if (Array.isArray(entry.params) && entry.params.length) {
+      params = '<div class="tool-params">' + entry.params.map(function(p) {
+        var val = p.block
+          ? '<pre class="param-block">' + escapeHtml(p.value) + '</pre>'
+          : '<span class="param-val' + (p.mono ? ' mono' : '') + '">' + escapeHtml(p.value) + '</span>';
+        return '<div class="tool-param"><span class="param-label">' + escapeHtml(p.label) + '</span>' + val + '</div>';
+      }).join('') + '</div>';
+    }
+    var diff = '';
+    if (Array.isArray(entry.diff) && entry.diff.length) {
+      var sign = { add: '+', del: '-', ctx: ' ', sep: '' };
+      diff = '<pre class="diff">' + entry.diff.map(function(d) {
+        return d.t === 'sep'
+          ? '<span class="diff-line sep"> </span>'
+          : '<span class="diff-line ' + d.t + '">' + escapeHtml(sign[d.t] + ' ' + d.s) + '</span>';
+      }).join('') + '</pre>';
+    }
+    return head + params + diff;
+  }
+
   const VERBS = ["Réfléchit","Cogite","Médite","Élucubre","Mijote","Lit","Cherche","Pèse","Compose","Tricote"];
   let verbTimer = null, dotsTimer = null;
   function showThinking(on) {
@@ -275,7 +314,7 @@ class TeamClaudePanel {
       li.innerHTML = \`<div class="meta">\${formatTime(entry.ts)} · Claude</div><div class="body">\${escapeHtml(entry.text)}</div>\`;
     } else if (entry.role === "assistant" && entry.tool) {
       li.className = "tool";
-      li.innerHTML = \`<div class="body"><span class="tool-name">🔧 \${escapeHtml(entry.tool)}</span>\${entry.summary ? " " + escapeHtml(entry.summary) : ""}</div>\`;
+      li.innerHTML = renderToolHtml(entry);
     } else return;
     const atBottom = ul.scrollTop + ul.clientHeight >= ul.scrollHeight - 20;
     ul.appendChild(li);

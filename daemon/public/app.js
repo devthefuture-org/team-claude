@@ -119,12 +119,38 @@ function appendClaudeEntry(entry) {
       <div class="body">${escapeHtml(entry.text)}</div>`;
   } else if (entry.role === "assistant" && entry.tool) {
     li.className = "tool";
-    li.innerHTML = `<div class="meta">${formatTime(entry.ts)} · 🔧 ${escapeHtml(entry.tool)}</div>
-      ${entry.summary ? `<div class="body">${escapeHtml(entry.summary)}</div>` : ""}`;
+    li.innerHTML = renderToolEntry(entry);
   } else {
     return;
   }
   streamAppend(li);
+}
+
+function renderToolEntry(entry) {
+  const head = `<div class="meta">${formatTime(entry.ts)} · 🔧 <span class="tool-name">${escapeHtml(entry.tool)}</span>${
+    entry.summary ? ` <span class="tool-target">${escapeHtml(entry.summary)}</span>` : ""}</div>`;
+
+  let params = "";
+  if (Array.isArray(entry.params) && entry.params.length) {
+    params = `<div class="tool-params">` + entry.params.map(p => {
+      const val = p.block
+        ? `<pre class="param-block">${escapeHtml(p.value)}</pre>`
+        : `<span class="param-val${p.mono ? " mono" : ""}">${escapeHtml(p.value)}</span>`;
+      return `<div class="tool-param"><span class="param-label">${escapeHtml(p.label)}</span>${val}</div>`;
+    }).join("") + `</div>`;
+  }
+
+  let diff = "";
+  if (Array.isArray(entry.diff) && entry.diff.length) {
+    const sign = { add: "+", del: "-", ctx: " ", sep: "" };
+    diff = `<pre class="diff">` + entry.diff.map(d =>
+      d.t === "sep"
+        ? `<span class="diff-line sep"> </span>`
+        : `<span class="diff-line ${d.t}">${escapeHtml(sign[d.t] + " " + d.s)}</span>`
+    ).join("") + `</pre>`;
+  }
+
+  return head + params + diff;
 }
 
 // Set when we send; the next matching echo from the daemon gets a brief
